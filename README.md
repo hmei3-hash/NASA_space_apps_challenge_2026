@@ -1,6 +1,6 @@
-# Habitat–Astronaut Distributed OS
+# Mars Radiation-Aware Wearable Health Monitoring + Software ECC
 
-**A lightweight, edge-AI health monitor for Mars surface crews that keeps its alerts trustworthy when radiation hits both the astronaut and the electronics.**
+**A lightweight wearable health monitor for Mars surface crews, protected by software ECC so its alerts stay trustworthy when radiation hits both the astronaut and the electronics.**
 
 > NASA International Space Apps Challenge 2026
 > Challenge: **Create Health Monitoring Software for Astronauts on Space Missions**
@@ -18,7 +18,7 @@
    - [What it does](#what-it-does)
    - [Mission scenario](#mission-scenario)
    - [How it works](#how-it-works)
-   - [Radiation-resilient data integrity layer](#radiation-resilient-data-integrity-layer)
+   - [Radiation-aware data integrity layer: Software ECC](#radiation-aware-data-integrity-layer-software-ecc)
    - [Evaluation](#evaluation)
    - [Benefits and intended impact](#benefits-and-intended-impact)
    - [Tools, languages, hardware and software](#tools-languages-hardware-and-software)
@@ -36,9 +36,9 @@
 
 ## High-Level Project Summary
 
-On Mars, the one-way communication delay can exceed 20 minutes, so astronauts have to judge their own health without real-time help from Earth. We built a health monitoring tool that runs **entirely on a lightweight wearable node**. Each astronaut's node learns a **personal baseline** for heart rate, HRV, skin temperature, SpO₂, sleep and activity. When a reading deviates from that baseline, the node flags it and gives clear, color-coded guidance on what to do next.
+On Mars, the one-way communication delay can exceed 20 minutes, so astronauts have to judge their own health without real-time help from Earth. We built a health monitoring tool that runs **entirely on a lightweight wearable**. Each astronaut's wearable learns a **personal baseline** for heart rate, HRV, skin temperature, SpO₂, sleep and activity. When a reading deviates from that baseline, the wearable flags it and gives clear, color-coded guidance on what to do next.
 
-Our key insight is that **radiation hurts the crew and the electronics at the same moment**. During a solar particle event (SPE), the dose rate spikes just when alerts matter most. At the same time, bit flips (single-event upsets) in commercial wearables, which are not radiation-hardened, also spike and can silently suppress alarms. A wearable cannot carry heavy metal shielding, so we **trade compute for shielding mass**: a lightweight software data-integrity layer protects the monitoring pipeline. Using fault injection driven by NASA radiation measurements, we show that **health alerts stay reliable when they are needed most**.
+Our key insight is that **radiation hurts the crew and the electronics at the same moment**. During a solar particle event (SPE), the dose rate spikes just when alerts matter most. At the same time, bit flips (single-event upsets) in commercial wearables, which are not radiation-hardened, also spike and can silently suppress alarms. A wearable cannot carry heavy metal shielding, so we **trade compute for shielding mass**: a radiation-aware software layer (software ECC/SECDED, plus plausibility checks, redundancy and model scrubbing) protects the monitoring pipeline. Using fault injection driven by NASA radiation measurements, we show that **health alerts stay reliable when they are needed most**.
 
 ---
 
@@ -52,8 +52,8 @@ Our key insight is that **radiation hurts the crew and the electronics at the sa
 Demo storyline:
 1. **Cruise phase (fast-forward).** The system builds each astronaut's personal baseline in microgravity.
 2. **Landing transition (0.38 g).** Baseline adaptation slows, thresholds widen and the model layer is down-weighted.
-3. **EVA with link loss.** The astronaut's node keeps detecting and alerting locally, then syncs to the Habitat when the link returns.
-4. **Solar particle event.** The dose rate and bit-flip rate surge together. Integrity badges separate *"your heart rate is abnormal"* from *"this reading may be corrupted, please re-measure"*, and the Habitat coordinates crew recall.
+3. **EVA with link loss.** The astronaut's wearable keeps detecting and alerting locally, then syncs to the Habitat when the link returns.
+4. **Solar particle event.** The dose rate and bit-flip rate surge together. Integrity badges separate *"your heart rate is abnormal"* from *"this reading may be corrupted, please re-measure"*, and the astronaut is guided back to shelter.
 
 ## Link to Final Project
 
@@ -100,15 +100,15 @@ NASA's Human Research Program identifies five hazards of human spaceflight: **sp
 ### How it works
 
 ```
- ┌──────────────── Astronaut wearable node (edge) ────────────────┐
+ ┌──────────────── Astronaut wearable (edge) ─────────────────────┐
  │  Sensors → Integrity checks → Baseline layer (EWMA + CUSUM)    │──► Local alert + guidance
  │                              → Model layer (INT8 anomaly model)│──► "Suggest re-check"
  └───────────────────────────────┬────────────────────────────────┘
                                  │ intermittent link (EVA)
  ┌───────────────────────────────▼────────────────────────────────┐
- │  Habitat node: crew dashboard · data-gap / SEFI detection ·    │
- │  radiation mode (MAVEN-style upstream SEP warning) ·           │
- │  queued reports for the flight surgeon on Earth                │
+ │  Habitat dashboard (sync receiver): trends · data-gap / SEFI   │
+ │  detection · SEP warning feed · queued reports for the flight  │
+ │  surgeon on Earth                                              │
  └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -133,7 +133,7 @@ NASA's Human Research Program identifies five hazards of human spaceflight: **sp
 - Guidance text is selected by a **rule engine from cited templates; no LLM generates medical advice**.
 - CO₂ limits are **pressure-compensated**: 3 mmHg is about 0.39 % at 760 mmHg, but about 0.57 % in a 10.2 psi (≈ 527 mmHg) exploration atmosphere.
 
-### Radiation-resilient data integrity layer
+### Radiation-aware data integrity layer: Software ECC
 
 Commercial off-the-shelf (COTS) devices are expected to meet many exploration medical needs, but they are not radiation-hardened and usually lack ECC memory. NASA's ExMC gap list explicitly asks what hardware and software can survive the deep-space radiation environment.
 
@@ -200,10 +200,10 @@ Detection quality is measured two ways:
 ### Tools, languages, hardware and software
 | Area | Choice |
 |---|---|
-| Languages | Python (simulation, detection, model training); C (firmware on the node) |
+| Languages | Python (simulation, detection, model training); C (wearable firmware) |
 | Model | scikit-learn / PyTorch → ONNX → INT8 quantization, `onnxruntime` |
-| Hardware | ESP32-class MCU development board running the node firmware. **No 3D-printed enclosure and no physical sensors**: sensor streams are replayed from datasets and simulated. Laptop or Raspberry Pi as the Habitat node |
-| Communication | Wi-Fi / UDP or MQTT between nodes |
+| Hardware | ESP32-class MCU development board running the wearable firmware. **No 3D-printed enclosure and no physical sensors**: sensor streams are replayed from datasets and simulated. A laptop hosts the Habitat dashboard |
+| Communication | Intermittent Wi-Fi/BLE sync from the wearable to the dashboard (link loss during EVA is simulated) |
 | UI | Web dashboard |
 
 ---
@@ -224,7 +224,6 @@ Detection quality is measured two ways:
 | NASA NTRS 20230010122: Artemis I radiation lessons | Deep-space environment severity; SEU-related flight computer resets |
 | NASA NTRS 20100029652: ExMC gap list | Need for radiation-tolerant medical hardware/software |
 | NASA NTRS 20160009070: COTS ADC SEE testing | SET transient characteristics |
-| NASA Starling 1.0 on-orbit autonomy results | Distributed-autonomy design reference |
 
 ## Space Agency Partner and Other Data
 
@@ -270,8 +269,8 @@ cd NASA_space_apps_challenge_2026
 > Planned layout. Update as code lands.
 
 ```
-├── sim/            # astronaut + Habitat node simulation, mission timeline
-├── firmware/       # node firmware for the ESP32-class board
+├── sim/            # mission timeline, sensor replay, radiation environment per phase
+├── firmware/       # wearable firmware for the ESP32-class board
 ├── detection/      # EWMA / CUSUM baselines, alert tiers, rule engine
 ├── model/          # anomaly model training, ONNX export, INT8 quantization
 ├── integrity/      # fault injection, CRC / SECDED / TMR, weight scrubbing
@@ -324,8 +323,7 @@ cd NASA_space_apps_challenge_2026
 16. Thambawita, V. et al. (2020). PMData: a sports logging dataset. *ACM MMSys '20*. https://datasets.simula.no/pmdata/
 17. Hongn, A. et al. (2025). Wearable Device Dataset from Induced Stress and Structured Exercise Sessions (v1.0.1). PhysioNet. https://physionet.org/content/wearable-device-dataset/1.0.1/
 18. NASA-STD-3001 Volume 2, Revision E.
-19. Starling 1.0: Advancing Autonomy in Distributed Space Systems — Insights from On-Orbit Testing.
-20. Bit-flip sensitivity of DNN weights across numeric formats. https://link.springer.com/article/10.1007/s11227-024-06693-7
+19. Bit-flip sensitivity of DNN weights across numeric formats. https://link.springer.com/article/10.1007/s11227-024-06693-7
 
 ## License
 
