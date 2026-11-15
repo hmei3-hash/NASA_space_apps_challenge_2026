@@ -72,6 +72,8 @@ Turn on a scenario event in the Plan tab and press play.
 - **Two-team broadcast:** tick *Second EVA team* in the Plan tab. A team working upwind sees the front first and puts it on the shared log; the dialog shows how many minutes that added.
 - **Planet-wide sharing (Globe view):** replay the 2018 global storm or the January 2022 regional storm, or a typical northern flushing storm. The globe shows the dust spreading, each base's status (clear / watch / in the storm), the shared hazard log, and how much warning sharing buys each base. The storm model is a kinematic fit to dated observations (checked by `npm test`), not a forecast.
 
+- **Radiation:** quiet dose is Curiosity's RAD level adjusted to local air pressure (Guo et al. 2015); a solar-event alert follows the RAD nowcast of Löwe et al. 2025, confirmed by 2 of 4 dose sensors. See docs/RESEARCH.md section 5.
+
 Why this matters, with sources (Opportunity 2018, Jezero 2022, 2018 storm growth, Apollo 1972, RAD 2024): [docs/RESEARCH.md](docs/RESEARCH.md), sections 1 and 4.
 
 ## Limitations (deliberate)

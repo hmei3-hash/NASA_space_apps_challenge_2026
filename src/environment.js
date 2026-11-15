@@ -2,10 +2,12 @@
 // Sources (in order of preference) are always reported with a provenance label.
 
 import { CONFIG, LABEL } from './config.js';
+import { RAD, gcrDose } from './radmodel.js';
 
 export const SOL_S = 88775.244;          // one sol in SI seconds
 export const MARS_HOUR_S = SOL_S / 24;   // one LTST "hour"
 const RHO_AIR = 0.020;                   // kg/m^3, typical near-surface density (Model Estimate)
+const STORM_TIDE_GAIN = 2.5;             // Sánchez-Lavega et al. 2023, sec. 8: S1 ×2.7, S2 ×4; conclusions 2–3×
 
 async function fetchJson(url) {
   try { const r = await fetch(url); if (!r.ok) return null; return await r.json(); } catch { return null; }
@@ -27,7 +29,11 @@ export class Environment {
 
   async load() {
     const m = await fetchJson('data/meda_sol.json');
-    if (m && Array.isArray(m.bins) && m.bins.length > 4) this.meda = m;
+    if (m && Array.isArray(m.bins) && m.bins.length > 4) {
+      this.meda = m;
+      const ps = m.bins.map((b) => b.P).filter((x) => x !== null && x !== undefined);
+      this.pMean = ps.reduce((a, x) => a + x, 0) / ps.length;
+    }
     const r = await fetchJson('data/rad.json');
     if (r && r.baseline) this.rad = r;
     return this;
@@ -66,10 +72,17 @@ export class Environment {
       if (p0 !== null) { label = LABEL.REPLAY; src = `MEDA PS, sol ${this.meda.sol}`; }
     }
     if (p0 === null) p0 = 730 * (1 + 0.025 * Math.cos((2 * Math.PI * (h - 6)) / 24) - 0.01 * Math.cos((4 * Math.PI * (h - 10)) / 24));
+    // Inside a dust storm the daily pressure swing grows: tides 2–3× stronger over Jezero in January 2022
+    // (Sánchez-Lavega et al. 2023). We scale MEDA's swing about its daily mean by 2.5 once the front has passed.
+    const d = this.scenarios.dust, ds = d.crewStartS ?? d.startS;
+    if (d.on && tS >= ds && this.pMean) {
+      const k = 1 + (STORM_TIDE_GAIN - 1) * Math.min(1, (tS - ds) / 3600);
+      p0 = this.pMean + (p0 - this.pMean) * k; label = `${label} + ${LABEL.SCENARIO}`; src += ', daily swing scaled for the dust storm';
+    }
     const dz = z - this.refElevation;
     const v = p0 * Math.exp(-dz / CONFIG.pressureScaleHeightM.value);
     if (Math.abs(dz) > 1) { label = `${label} + ${LABEL.MODEL}`; src += ', shifted to local elevation (scale height)'; }
-    const short = label.startsWith(LABEL.REPLAY) ? `MEDA at the rover, adjusted to this elevation` : 'Placeholder daily cycle, not measured';
+    const short = label.includes(LABEL.SCENARIO) ? 'MEDA, daily swing scaled for the storm' : label.startsWith(LABEL.REPLAY) ? `MEDA at the rover, adjusted to this elevation` : 'Placeholder daily cycle, not measured';
     return { v, unit: 'Pa', label, src, short };
   }
 
@@ -107,28 +120,42 @@ export class Environment {
     return { v: mu > 0.02 ? Math.exp(-tau / mu) : 0, label: LABEL.MODEL, src: 'Beer–Lambert, simple sun-elevation model', short: 'From dust depth and sun height' };
   }
 
-  doseRate(tS) {
-    const b = this.rad.baseline;
-    const s = this.scenarios.sep;
-    if (s.on && this.rad.sep && tS >= s.startS) {
-      const hrs = (tS - s.startS) / 3600;
-      const P = this.rad.sep;
-      let v = P.uGyPerDay[P.uGyPerDay.length - 1];
-      for (let k = 1; k < P.tH.length; k++) {
-        if (P.tH[k] >= hrs) { const f = (hrs - P.tH[k - 1]) / (P.tH[k] - P.tH[k - 1]); v = P.uGyPerDay[k - 1] + (P.uGyPerDay[k] - P.uGyPerDay[k - 1]) * f; break; }
-      }
-      return { v, unit: 'µGy/day', label: LABEL.SCENARIO, src: `SEP profile observed by RAD (${P.event}), replayed as a scenario`, short: 'May 2024 RAD solar event, replayed' };
-    }
-    if (s.on && !this.rad.sep && tS >= s.startS) {
-      return { v: b.uGyPerDay * 20, unit: 'µGy/day', label: LABEL.SCENARIO, src: 'SEP scenario (×20 placeholder; run preprocess_rad.py for the observed profile)', short: 'Placeholder solar event (×20)' };
-    }
-    return { v: b.uGyPerDay, unit: 'µGy/day', label: LABEL.OBS, src: `RAD ${b.signal}, ${b.window}, ${b.site} — not Jezero`, short: 'Curiosity RAD at Gale crater, not Jezero' };
+  /** Quiet (cosmic-ray) dose rate at elevation z: RAD's Gale level, shifted by local air pressure (Guo et al. 2015). */
+  backgroundDose(tS, z = this.refElevation) {
+    const b = this.rad.baseline, p = this.pressure(tS, z).v;
+    return { v: gcrDose(b.uGyPerDay, p), pPa: p };
   }
 
-  /** Cumulative dose (µGy) from 0..tS by 60 s integration. */
-  cumulativeDose(tS) {
+  /** Dose rate (µGy/day) at time tS and elevation z. */
+  doseRate(tS, z = this.refElevation) {
+    const b = this.rad.baseline;
+    const s = this.scenarios.sep;
+    const bg = this.backgroundDose(tS, z);
+    if (s.on && tS >= s.startS) {
+      // the replayed event is a total measured at Gale; its excess over Gale's quiet level is added to the local background
+      let excess = b.uGyPerDay * 19, src = 'SEP scenario (×20 placeholder; run preprocess_rad.py for the observed profile)', short = 'Placeholder solar event (×20)';
+      if (this.rad.sep) {
+        const hrs = (tS - s.startS) / 3600, P = this.rad.sep;
+        let v = P.uGyPerDay[P.uGyPerDay.length - 1];
+        for (let k = 1; k < P.tH.length; k++) {
+          if (P.tH[k] >= hrs) { const f = (hrs - P.tH[k - 1]) / (P.tH[k] - P.tH[k - 1]); v = P.uGyPerDay[k - 1] + (P.uGyPerDay[k] - P.uGyPerDay[k - 1]) * f; break; }
+        }
+        excess = Math.max(0, v - b.uGyPerDay);
+        src = `SEP profile observed by RAD (${P.event}), replayed as a scenario`; short = 'May 2024 RAD solar event, replayed';
+      }
+      return { v: bg.v + excess, unit: 'µGy/day', label: LABEL.SCENARIO, src, short };
+    }
+    return {
+      v: bg.v, unit: 'µGy/day', label: `${LABEL.OBS} + ${LABEL.MODEL}`,
+      src: `RAD ${b.signal}, ${b.window}, ${b.site}; shifted to local pressure ${bg.pPa.toFixed(0)} Pa with κ = ${RAD.kappa} µGy/day/Pa (Guo et al. 2015)`,
+      short: 'Curiosity RAD at Gale, adjusted to local air pressure',
+    };
+  }
+
+  /** Cumulative dose (µGy) from 0..tS by 60 s integration; zAt(t) gives the crew's elevation (default: habitat). */
+  cumulativeDose(tS, zAt = null) {
     let acc = 0;
-    for (let t = 0; t < tS; t += 60) acc += this.doseRate(t).v * (Math.min(60, tS - t) / 86400);
-    return { v: acc, unit: 'µGy', label: LABEL.MODEL, src: 'dose rate × time; no terrain shielding modeled', short: 'Dose rate × time, no shielding modelled' };
+    for (let t = 0; t < tS; t += 60) acc += this.doseRate(t, zAt ? zAt(t) : this.refElevation).v * (Math.min(60, tS - t) / 86400);
+    return { v: acc, unit: 'µGy', label: LABEL.MODEL, src: 'dose rate × time along the route; air shielding by elevation, no terrain shielding', short: 'Dose rate × time along the route' };
   }
 }
