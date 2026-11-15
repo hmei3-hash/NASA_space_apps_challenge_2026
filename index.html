@@ -25,6 +25,7 @@
           <label class="toggle"><input id="follow" type="checkbox" checked /><span>Camera follows crew</span></label>
         </div>
       </details>
+      <button id="demoBtn" class="pillbtn demo" title="Play a 30-second guided demo (Esc to stop)">▶ Demo</button>
       <button id="globeBtn" class="pillbtn" aria-pressed="true" title="Whole-planet view">Globe</button>
       <button id="fpBtn" title="First-person view (F)">First person</button>
     </div>
@@ -36,6 +37,7 @@
       <div id="hint">Click the ground to set a destination. Drag to orbit, scroll to zoom.</div>
       <div id="preview" class="hidden"></div>
       <div id="globeCard" aria-live="polite"></div>
+      <div id="demoCap" hidden aria-live="polite"><p></p><div class="dc-bar"><i></i></div></div>
       <details id="planetPanel" open></details>
       <div id="replan" hidden></div>
       <div id="fade" aria-hidden="true"></div>

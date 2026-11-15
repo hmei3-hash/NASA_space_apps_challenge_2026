@@ -23,7 +23,7 @@ export class ProfileStrip {
       if (!this.route) return;
       const r = this.c.getBoundingClientRect();
       const f = Math.min(1, Math.max(0, (e.clientX - r.left - this.pad.l) / (r.width - this.pad.l - this.pad.r)));
-      this.onScrub(f * this.route.durationS);
+      this.onScrub(f * this.end());
     };
     canvas.addEventListener('pointerdown', (e) => { drag = true; canvas.setPointerCapture(e.pointerId); at(e); });
     canvas.addEventListener('pointermove', (e) => { if (drag) at(e); });
@@ -32,8 +32,8 @@ export class ProfileStrip {
     canvas.setAttribute('role', 'slider'); canvas.setAttribute('aria-valuemin', '0');
     canvas.addEventListener('keydown', (e) => {
       if (!this.route) return;
-      const step = this.route.durationS / 100;
-      if (e.key === 'ArrowRight') { this.onScrub(Math.min(this.route.durationS, this.t + step)); e.preventDefault(); }
+      const step = this.end() / 100;
+      if (e.key === 'ArrowRight') { this.onScrub(Math.min(this.end(), this.t + step)); e.preventDefault(); }
       if (e.key === 'ArrowLeft') { this.onScrub(Math.max(0, this.t - step)); e.preventDefault(); }
     });
   }
@@ -47,6 +47,9 @@ export class ProfileStrip {
     this.zlo = lo - span * 0.12; this.zhi = hi + span * 0.12;
   }
 
+  /** Timeline length: the route, or longer when the view continues after the crew is home. */
+  end() { return Math.max(this.route?.durationS || 0, this.opts?.endS || 0); }
+
   _resize() {
     const dpr = Math.min(2, devicePixelRatio || 1), w = this.c.clientWidth, h = this.c.clientHeight;
     if (this.c.width !== Math.round(w * dpr) || this.c.height !== Math.round(h * dpr)) { this.c.width = Math.round(w * dpr); this.c.height = Math.round(h * dpr); }
@@ -59,7 +62,7 @@ export class ProfileStrip {
     const { w, h } = this._resize(), g = this.g, P = this.pad, R = this.route;
     g.clearRect(0, 0, w, h);
     if (!R) { g.fillStyle = COL.text; g.font = '13px Barlow, sans-serif'; g.fillText('No route under the slope limit — pick another destination.', P.l, h / 2); return; }
-    const D = R.durationS, iw = w - P.l - P.r, ih = h - P.t - P.b;
+    const D = this.end(), RD = R.durationS, iw = w - P.l - P.r, ih = h - P.t - P.b;
     const X = (t) => P.l + (t / D) * iw;
     const Y = (z) => P.t + ih - ((z - this.zlo) / (this.zhi - this.zlo)) * ih;
 
@@ -87,6 +90,12 @@ export class ProfileStrip {
         g.fillText(`stop ${Math.round((b.t - a.t) / 60)} min${b.stopTag && b.stopTag !== 'destination' ? ' at ' + b.stopTag : ''}`, (x0 + x1) / 2, P.t + ih - 10);
         g.textAlign = 'left';
       }
+    }
+    if (D > RD) {
+      const last = S[S.length - 1], x0 = X(RD), x1 = X(D), y = Y(last.z);
+      g.fillStyle = '#2b3a4c'; g.fillRect(x0, y, x1 - x0, P.t + ih - y);
+      g.fillStyle = '#9fd3ff'; g.fillRect(x0, y - 1, x1 - x0, 2);
+      if (x1 - x0 > 60) { g.fillStyle = COL.ink; g.font = '11px Barlow, sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'center'; g.fillText('inside the habitat', (x0 + x1) / 2, P.t + ih - 10); g.textAlign = 'left'; }
     }
     const cxNow = X(Math.min(tS, D));
     g.fillStyle = 'rgba(26,31,39,0.55)'; g.fillRect(cxNow, P.t - 2, X(D) - cxNow + 1, ih + 2);
@@ -121,7 +130,7 @@ export class ProfileStrip {
     this.c.setAttribute('aria-valuetext', `${hm(tS)} into the EVA, ${gait === 'sampling' ? 'sampling' : GAIT_LABEL[gait].toLowerCase()}, elevation ${Math.round(cz)} metres`);
     // state bubble
     const pct = Math.round(here.grade * 100);
-    const label = here.stopTag === 'rover' ? 'Sheltering in the rover' : here.phase === 'drive' ? 'Driving home in the rover' : gait === 'sampling' ? `Sampling${here.stopTag ? ' at ' + here.stopTag : ''}` : `${GAIT_LABEL[gait]}${gait === 'normal' ? '' : ` ${pct > 0 ? '+' : ''}${pct}% grade`}`;
+    const label = tS >= RD - 1 ? 'Inside the habitat' : here.stopTag === 'rover' ? 'Sheltering in the rover' : here.phase === 'drive' ? 'Driving home in the rover' : gait === 'sampling' ? `Sampling${here.stopTag ? ' at ' + here.stopTag : ''}` : `${GAIT_LABEL[gait]}${gait === 'normal' ? '' : ` ${pct > 0 ? '+' : ''}${pct}% grade`}`;
     g.font = '600 12px Barlow, sans-serif'; const tw = g.measureText(label).width;
     let bx = cx + 18; if (bx + tw + 14 > w - 2) bx = cx - 18 - tw - 14;
     const by = Math.max(2, cy - 58);

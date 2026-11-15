@@ -22,6 +22,8 @@ npm test             # routing sanity tests on the synthetic terrain
 
 With no data downloaded the app runs on a **clearly labeled synthetic terrain**. Real data replaces it automatically once `public/data/terrain.json` exists.
 
+**30-second demo:** press **▶ Demo** in the header (Esc stops it), or open `http://localhost:5173/?demo` to start it automatically. It replays the 2018 storm on the globe, flies in to Jezero, picks the Science route, walks in first person, gets the dust warning from Team B, shelters in the rover, drives home and watches the storm pass. It drives the real app; nothing in it is pre-rendered.
+
 ## Get real data (PowerShell)
 
 ```powershell

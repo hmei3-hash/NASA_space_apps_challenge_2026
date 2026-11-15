@@ -176,6 +176,101 @@ function tickPlanet(dt) {
     : st[j] === 'storm' ? `${chip(LABEL.MODEL)} Shared log: Jezero is inside the ${sc.name.toLowerCase()}. Turn on the dust front below to rehearse it.` : '';
 }
 
+// ---------- 30-second guided demo ----------
+// Drives the real app (globe replay, fly-in, routes, visor, warning dialog, rover, home) on a fixed script.
+const DEMO = { ms: 30000, teamKm: 30, frontH: 1.6, net: 'habitat' };
+let demoRun = null;
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+function demoCaption(text) {
+  const el = $('demoCap'); el.hidden = !text;
+  if (text) el.querySelector('p').textContent = text;
+}
+
+/** Animate a numeric setter from a to b over ms; resolves early if the demo is stopped. */
+function tween(set, a, b, ms, run) {
+  return new Promise((res) => {
+    const t0 = performance.now();
+    const step = (now) => {
+      if (run.stop) return res();
+      const f = Math.min(1, (now - t0) / ms), e = f < 0.5 ? 2 * f * f : 1 - (-2 * f + 2) ** 2 / 2;
+      set(a + (b - a) * e);
+      if (f < 1) requestAnimationFrame(step); else res();
+    };
+    requestAnimationFrame(step);
+  });
+}
+const setT = (t) => { S.tS = t; };
+
+async function runDemo() {
+  if (demoRun) { demoRun.stop = true; return; }
+  const run = demoRun = { stop: false, t0: performance.now() };
+  const btn = $('demoBtn'); btn.textContent = '■ Stop'; btn.setAttribute('aria-pressed', 'true');
+  document.body.classList.add('demo-mode');
+  const bar = $('demoCap').querySelector('i');
+  const tick = () => { if (demoRun !== run) return; bar.style.width = `${Math.min(100, ((performance.now() - run.t0) / DEMO.ms) * 100)}%`; requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+  const at = async (ms) => { const w = run.t0 + ms - performance.now(); if (w > 0) await sleep(w); };
+  try {
+    // set up quietly
+    S.playing = false; $('play').textContent = '▶'; closeReplan();
+    if (S.fp) $('fpBtn').click();
+    if (S.view !== 'globe') setView('globe');
+    $('ppScen').value = 'gds2018'; $('ppSpeed').value = ''; setupPlanet();
+
+    // 1. planet: the 2018 storm, shared warning
+    demoCaption('2018 global dust storm, replayed. Meridiani is hit first and its broadcast warns Jezero 5 sols ahead.');
+    await tween((x) => { planet.sol = x; planet.key = ''; }, 0, 9.5, 4300, run); if (run.stop) return;
+
+    // 2. fly in
+    await at(4600); demoCaption('Jezero crater on NASA elevation and imagery data.');
+    flyIn(); await at(7000); if (run.stop) return;
+
+    // 3. plan
+    selectTab('plan');
+    $('routeCards').querySelector('.rcard[data-k=science]')?.click();
+    $('scDust').checked = true; $('scDustT').value = DEMO.frontH; $('scNet').value = DEMO.net;
+    $('scTeam').checked = true; $('scTeamKm').value = DEMO.teamKm; $('scSep').checked = false;
+    $('scDust').onchange();
+    S.tS = 0; update(0);
+    demoCaption('Three routes, judged on slope, EVA time and radiation dose. Every number is labelled by its source.');
+    await at(10000); if (run.stop) return;
+
+    // 4. walk in first person
+    const td = front.detections()[0].t;
+    $('fpBtn').click();
+    demoCaption('On the EVA: the helmet visor shows heading, next stop, partner, dose and dust.');
+    await tween(setT, 0, td, 5000, run); if (run.stop) return;
+
+    // 5. warning from Team B
+    if (S.fp) $('fpBtn').click();
+    S.tS = td; openReplan('dust');
+    demoCaption(`Team B, ${DEMO.teamKm} km upwind, sees the dust front first and shares it. The crew gets the call in seconds.`);
+    const go = $('replan').querySelector('.rp-opt.rec button');
+    await at(17600); go?.classList.add('pulse');
+    await at(19600); if (run.stop) return;
+    go?.click(); S.playing = false; $('play').textContent = '▶';
+
+    // 6. shelter, then home
+    const r = S.routes[S.sel];
+    demoCaption('Wait out the gust front in the pressurized rover, then drive home inside it.');
+    await tween(setT, S.tS, r.durationS, 5600, run); if (run.stop) return;
+
+    // 7. home, storm arrives
+    demoCaption('Home and safe while the storm passes. Marswalk: plan, warn, shelter, share.');
+    S.homeFramed = false;
+    await tween(setT, r.durationS, Math.min(playEnd(r), Math.max(r.durationS, front.tHab) + 20 * 60), 4000, run);
+    await at(DEMO.ms);
+  } finally {
+    S.playing = false; $('play').textContent = '▶';
+    $('demoCap').querySelector('i').style.width = '0';
+    demoCaption(null);
+    document.body.classList.remove('demo-mode');
+    btn.textContent = '▶ Demo'; btn.setAttribute('aria-pressed', 'false');
+    demoRun = null;
+  }
+}
+
 function setView(v) {
   S.view = v;
   const g = v === 'globe';
@@ -516,7 +611,7 @@ function renderTable() {
 
 const profile = new ProfileStrip($('profile'), (t) => { S.tS = t; update(0); });
 function drawTrack() {
-  profile.setRoute(S.routes[S.sel], { dust: env.scenarios.dust, warnS: front ? front.detections()[0].t : undefined, sep: env.scenarios.sep, budgetS: CONFIG.evaLimitH.value * 3600 });
+  profile.setRoute(S.routes[S.sel], { endS: playEnd(S.routes[S.sel]), dust: env.scenarios.dust, warnS: front ? front.detections()[0].t : undefined, sep: env.scenarios.sep, budgetS: CONFIG.evaLimitH.value * 3600 });
 }
 
 // ---------- mid-EVA re-planning + dust-front early warning ----------
@@ -535,6 +630,14 @@ let front = null; // DustFront while the dust scenario is on
 const dustWall = makeDustWall(); scene.add(dustWall);
 const stationGroup = new THREE.Group(); scene.add(stationGroup);
 const roverGroup = new THREE.Group(); scene.add(roverGroup);
+
+/** Where playback ends: the EVA end, or later if a dust front still has to reach the habitat (watch it arrive from inside). */
+const AFTER_FRONT_S = 40 * 60;
+function playEnd(r) {
+  if (!r) return 0;
+  return env.scenarios.dust.on && front ? Math.max(r.durationS, front.tHab + AFTER_FRONT_S) : r.durationS;
+}
+const isHome = (r) => r && S.tS >= r.durationS - 1;
 
 function integrate(fn, t0, t1) { let acc = 0; for (let t = t0; t < t1; t += 60) acc += fn(t) * Math.min(60, t1 - t); return acc; }
 
@@ -744,8 +847,8 @@ function update(dtReal) {
   });
   const K = updateFront(S.tS, p.x);
   updateDust(dust, crew[0].position, tau.v, Wd.v, dtReal);
-  const driving = p.phase === 'drive';
-  crew[0].visible = !S.fp && !driving; crew[1].visible = !driving;
+  const driving = p.phase === 'drive', home = isHome(r);
+  crew[0].visible = !S.fp && !driving && !home; crew[1].visible = !driving && !home;
   if (S.roverMesh) {
     if (driving) { S.roverMesh.position.copy(toWorld(p.x, p.y, p.z)); if (p.heading !== undefined) S.roverMesh.rotation.y = -p.heading; }
     else S.roverMesh.position.copy(S.roverHome);
@@ -757,19 +860,33 @@ function update(dtReal) {
   if (S.fp) {
     scene.fog.near = 30; scene.fog.far = Math.max(250, 9000 / Math.max(0.3, tau.v));
     const ahead = sampleAt(r, Math.min(r.durationS, S.tS + 40));
-    if (Math.hypot(ahead.x - p.x, ahead.y - p.y) > 2) {
+    if (home && front) {
+      let d = Math.PI - S.fpYaw; d = Math.atan2(Math.sin(d), Math.cos(d)); S.fpYaw += d * Math.min(1, dtReal * 2 + (dtReal === 0 ? 1 : 0));
+    } else if (Math.hypot(ahead.x - p.x, ahead.y - p.y) > 2) {
       const target = Math.atan2(ahead.y - p.y, ahead.x - p.x);
       let d = target - S.fpYaw; d = Math.atan2(Math.sin(d), Math.cos(d));
       S.fpYaw += d * Math.min(1, dtReal * 2 + (dtReal === 0 ? 1 : 0));
     }
-    const eye = toWorld(p.x, p.y, p.z).add(new THREE.Vector3(0, 2.2 + (p.phase === 'stop' ? 0 : 0.05 * Math.sin(performance.now() / 160)), 0));
+    const eye = home ? toWorld(p.x - 30, p.y + 12, p.z).add(new THREE.Vector3(0, 7, 0)) // west side of the habitat, clear of the solar array
+      : toWorld(p.x, p.y, p.z).add(new THREE.Vector3(0, 2.2 + (p.phase === 'stop' ? 0 : 0.05 * Math.sin(performance.now() / 160)), 0));
     const yaw = S.fpYaw + S.fpYawOff;
     const dir = new THREE.Vector3(Math.cos(yaw) * Math.cos(S.fpPitch), Math.sin(S.fpPitch), Math.sin(yaw) * Math.cos(S.fpPitch));
     camera.position.copy(eye); camera.lookAt(eye.clone().add(dir));
   } else {
     scene.fog.near = W() * 0.9; scene.fog.far = W() * 3.5;
   }
-  if (!S.fp && $('follow').checked) {
+  if (home && front && !S.fp && !S.homeFramed && (S.playing || demoRun)) {
+    S.homeFramed = true;
+    const h = toWorld(p.x, p.y, p.z);
+    S.camGoal = { target: h.clone().add(new THREE.Vector3(-300, 60, 0)), pos: h.clone().add(new THREE.Vector3(700, 380, 260)) };
+  }
+  if (!home) S.homeFramed = false;
+  if (S.camGoal && !S.fp) {
+    const k = Math.min(1, dtReal * 1.5);
+    controls.target.lerp(S.camGoal.target, k); camera.position.lerp(S.camGoal.pos, k);
+    if (camera.position.distanceTo(S.camGoal.pos) < 5) S.camGoal = null;
+  } else if (!S.fp && $('follow').checked) {
+
     const target = crew[0].position.clone().add(new THREE.Vector3(0, 20, 0));
     const delta = target.clone().sub(controls.target);
     controls.target.add(delta.multiplyScalar(Math.min(1, dtReal * 3 + (dtReal === 0 ? 1 : 0))));
@@ -779,13 +896,16 @@ function update(dtReal) {
   // HUD
   const hud = [];
   if (state.flags.includes('radiation')) hud.push(`<div class="hudmsg rad">☢ Radiation ${Math.round(dr.v)} µGy/day, above the ${CONFIG.radWarnUGyPerDay.value} warning level. Head back to the habitat.</div>`);
-  if (state.flags.includes('dust')) hud.push(`<div class="hudmsg dust">Dust storm, τ ${tau.v.toFixed(1)}. Visibility down; protect seals, optics and solar panels.</div>`);
+  if (state.flags.includes('dust') && !home) hud.push(`<div class="hudmsg dust">Dust storm, τ ${tau.v.toFixed(1)}. Visibility down; protect seals, optics and solar panels.</div>`);
   if (S.tS > CONFIG.evaLimitH.value * 3600) hud.push('<div class="hudmsg margin">Past the EVA time budget</div>');
-  if (K && !K.passed) hud.push(`<div class="hudmsg dust">Dust front about ${Math.round((p.x - K.frontXEst) / 1000)} km west, moving east at ${K.speed.toFixed(0)} m/s. Reaches you in about ${fmtMin(K.etaS)}.</div>`);
-  if (K && K.passed && front && front.tHab > S.tS) hud.push(`<div class="hudmsg fp">Your sighting is on the shared log. The front reaches the habitat in about ${fmtMin(front.tHab - S.tS)}.</div>`);
+  if (home && K && !K.passed) hud.push(`<div class="hudmsg dust">Crew inside the habitat. Dust front ${Math.round((p.x - K.frontXEst) / 1000)} km west, here in about ${fmtMin(K.etaS)}.</div>`);
+  else if (home && front && S.tS >= front.tHab) hud.push(`<div class="hudmsg dust">Dust storm over the habitat. Crew safe inside${S.fp ? ', view from the west side of the habitat' : ''}.</div>`);
+  else if (K && !K.passed) hud.push(`<div class="hudmsg dust">Dust front about ${Math.round((p.x - K.frontXEst) / 1000)} km west, moving east at ${K.speed.toFixed(0)} m/s. Reaches you in about ${fmtMin(K.etaS)}.</div>`);
+  if (!home && K && K.passed && front && front.tHab > S.tS) hud.push(`<div class="hudmsg fp">Your sighting is on the shared log. The front reaches the habitat in about ${fmtMin(front.tHab - S.tS)}.</div>`);
   if (S.sel === 'replan' && S.replanInfo) hud.push(`<div class="hudmsg fp">Re-planned at T+${fmtHM(S.replanInfo.at)}: ${S.replanInfo.name.toLowerCase()}</div>`);
   const hudHTML = hud.join(''); if (hudHTML !== lastHud) { $('hud').innerHTML = hudHTML; lastHud = hudHTML; }
-  if (S.fp) updateVisor(r, p, { T, P, Wd, tau, dr, cum, K });
+  visor.show(S.fp && !home); // no helmet once the crew is inside
+  if (S.fp && !home) updateVisor(r, p, { T, P, Wd, tau, dr, cum, K });
 
   // conditions tiles
   const tile = (k, v, unit, x, extra = '', cls = '') => `<div class="tile ${cls}" title="${x.src}"><div class="k"><span>${k}</span>${chip(x.label)}</div><div class="v">${v}<small>${unit}</small></div><div class="src">${[x.short, extra].filter(Boolean).join('. ')}</div></div>`;
@@ -806,7 +926,7 @@ function update(dtReal) {
   showPreview(p.phase === 'stop' ? p.stopTag : null);
 
   const ltst = env.ltstH(S.tS);
-  $('clock').innerHTML = `<div class="big">T+${fmtHM(S.tS)}</div><div class="small">${String(Math.floor(ltst)).padStart(2, '0')}:${String(Math.floor((ltst % 1) * 60)).padStart(2, '0')} local solar time<br>of ${fmtHM(r.durationS)} planned</div>`;
+  $('clock').innerHTML = `<div class="big">T+${fmtHM(S.tS)}</div><div class="small">${String(Math.floor(ltst)).padStart(2, '0')}:${String(Math.floor((ltst % 1) * 60)).padStart(2, '0')} local solar time<br>${home ? 'EVA over, crew home' : `of ${fmtHM(r.durationS)} planned`}</div>`;
   profile.draw(S.tS, state, p, dtReal, walking);
   // sun follows local solar time (simple model): low and warm in the morning, high at noon
   const sunEl = Math.max(0.05, Math.sin((Math.PI * (ltst - 6)) / 12)) * 1.2, sunAz = (ltst - 12) / 12 * Math.PI;
@@ -980,13 +1100,13 @@ function loop(now) {
   const r = S.routes[S.sel];
   if (S.playing && r) {
     const before = S.tS;
-    S.tS = Math.min(r.durationS, S.tS + dt * +$('speed').value);
+    S.tS = Math.min(playEnd(r), S.tS + dt * +$('speed').value);
     for (const kind of ['dust', 'sep']) {
       const sc = env.scenarios[kind];
       const at = Math.max(1, kind === 'dust' ? (front ? front.detections()[0].t : Infinity) : sc.startS);
-      if (sc.on && !S.handled[kind] && before < at && S.tS >= at && S.sel !== 'replan') { S.tS = at; openReplan(kind); break; }
+      if (sc.on && !S.handled[kind] && before < at && S.tS >= at && S.sel !== 'replan') { if (at >= r.durationS) { S.handled[kind] = true; continue; } S.tS = at; openReplan(kind); break; }
     }
-    if (S.tS >= r.durationS) { S.playing = false; $('play').textContent = '▶'; }
+    if (S.tS >= playEnd(r)) { S.playing = false; $('play').textContent = '▶'; }
   }
   if (S.view === 'globe') {
     tickPlanet(dt);
@@ -1042,6 +1162,9 @@ async function main() {
   globe.onSource = () => { if (S.view === 'globe') showGlobeCard('site'); };
   resize();
   $('globeBtn').onclick = () => setView(S.view === 'globe' ? 'local' : 'globe');
+  $('demoBtn').onclick = runDemo;
+  addEventListener('keydown', (e) => { if (e.key === 'Escape' && demoRun) demoRun.stop = true; });
+  if (new URLSearchParams(location.search).has('demo')) setTimeout(runDemo, 1500);
   setView('globe');
   requestAnimationFrame(loop);
 }
