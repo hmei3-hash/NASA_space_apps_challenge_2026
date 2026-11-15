@@ -11,6 +11,8 @@
     "test": "node scripts/test_routing.mjs"
   },
   "dependencies": {
+    "@fontsource/barlow": "^5.3.0",
+    "@fontsource/barlow-condensed": "^5.3.0",
     "three": "^0.187.0"
   },
   "devDependencies": {

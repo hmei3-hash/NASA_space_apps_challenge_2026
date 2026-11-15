@@ -1,3 +1,8 @@
+import '@fontsource/barlow/400.css';
+import '@fontsource/barlow/600.css';
+import '@fontsource/barlow/700.css';
+import '@fontsource/barlow-condensed/500.css';
+import '@fontsource/barlow-condensed/700.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CONFIG, LABEL, ROUTE_STYLE } from './config.js';
@@ -7,10 +12,13 @@ import { Environment, MARS_HOUR_S } from './environment.js';
 import { makeAstronaut, animate, classifyState, GAIT_TEXT, makeDust, updateDust, SCALE } from './astronaut.js';
 import { RESOURCE_TYPES, badgeSprite, badgeImgHTML } from './resources.js';
 import { ICON_ATTRIBUTION } from './icons.js';
+import { makeHabitat, tickHabitat, HAB_SCALE } from './habitat.js';
+import { ProfileStrip, GAIT_LABEL } from './profile.js';
 
 const $ = (id) => document.getElementById(id);
 const CHIP = { [LABEL.OBS]: 'o', [LABEL.REPLAY]: 'r', [LABEL.MODEL]: 'm', [LABEL.ASSUMP]: 'a', [LABEL.SCENARIO]: 's' };
-const chip = (label) => [...new Set(label.split(' + '))].map((l) => `<i class="chip ${CHIP[l] || 'm'}">${l}</i>`).join(' ');
+const PVWORD = { o: 'measured', r: 'replay', m: 'model', a: 'assumed', s: 'scenario' };
+const chip = (label) => [...new Set(label.split(' + '))].map((l) => { const c = CHIP[l] || 'm'; return `<i class="pv ${c}" title="${l}">${PVWORD[c]}</i>`; }).join(' ');
 const fmtHM = (s) => { const m = Math.round(s / 60); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
 const MARS_R = 3396190;
 
@@ -25,6 +33,7 @@ const env = new Environment();
 const viewport = $('viewport');
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
 viewport.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xc79a7b);
@@ -33,15 +42,16 @@ const camera = new THREE.PerspectiveCamera(50, 1, 5, 120000);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI * 0.48;
-scene.add(new THREE.HemisphereLight(0xffe6d0, 0x3b2418, 0.9));
+const hemi = new THREE.HemisphereLight(0xffe6d0, 0x3b2418, 0.9); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff1e0, 2.0);
 sun.position.set(-3000, 4000, -1500);
 scene.add(sun);
 
+const habitat = makeHabitat(); scene.add(habitat);
 let terrainMesh, routeGroup = new THREE.Group(), markerGroup = new THREE.Group(), resGroup = new THREE.Group(), travGroup = new THREE.Group();
 scene.add(routeGroup, markerGroup, resGroup, travGroup);
 const SKY = new THREE.Color(0xc79a7b), DUSTSKY = new THREE.Color(0x9a6a48);
-const crew = [makeAstronaut(0xf5f5f5), makeAstronaut(0xe3ecff)];
+const crew = [makeAstronaut(0xf4f4f2, 0xd32f2f), makeAstronaut(0xf4f4f2)]; // red thigh band = EV1, plain = EV2
 crew.forEach((c) => scene.add(c));
 const dust = makeDust();
 scene.add(dust);
@@ -95,13 +105,21 @@ function colorTerrain() {
 }
 
 function labelSprite(text, color = '#fff') {
-  const c = document.createElement('canvas'); c.width = 512; c.height = 96;
+  const c = document.createElement('canvas'), g0 = c.getContext('2d');
+  g0.font = 'bold 44px Barlow, system-ui'; const tw = Math.ceil(g0.measureText(text).width) + 32;
+  c.width = tw; c.height = 96;
   const g = c.getContext('2d');
-  g.fillStyle = 'rgba(20,12,10,0.75)'; g.fillRect(0, 0, 512, 96);
-  g.font = 'bold 44px system-ui'; g.fillStyle = color; g.textBaseline = 'middle'; g.fillText(text, 16, 50);
+  g.fillStyle = 'rgba(18,21,27,0.8)'; g.fillRect(0, 0, tw, 96);
+  g.font = 'bold 44px Barlow, system-ui'; g.fillStyle = color; g.textBaseline = 'middle'; g.fillText(text, 16, 50);
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, sizeAttenuation: false }));
-  s.scale.set(0.16, 0.03, 1); s.renderOrder = 10;
+  s.scale.set(0.03 * tw / 96, 0.03, 1); s.renderOrder = 10;
   return s;
+}
+
+function placeHabitat() {
+  const s = S.fp ? 1 : HAB_SCALE;
+  habitat.scale.set(s, s * (S.fp ? 1 : 1), s);
+  habitat.position.copy(idxWorld(S.habitatIdx)).add(new THREE.Vector3(0, -0.6 * s, 0));
 }
 
 function buildMarkers() {
@@ -112,10 +130,9 @@ function buildMarkers() {
     m.position.copy(p).add(new THREE.Vector3(0, h / 2, 0)); markerGroup.add(m);
     const l = labelSprite(text, '#' + color.toString(16).padStart(6, '0')); l.position.copy(p).add(new THREE.Vector3(0, h + 70, 0)); markerGroup.add(l);
   };
-  const hb = badgeSprite('habitat', 0.055); hb.position.copy(idxWorld(S.habitatIdx)).add(new THREE.Vector3(0, 60, 0)); hb.userData.habitat = true; markerGroup.add(hb);
-  const hl = labelSprite('⌂ ' + S.sites.habitat.name); hl.position.copy(idxWorld(S.habitatIdx)).add(new THREE.Vector3(0, 60, 0)); hl.center.set(0.5, -0.9); markerGroup.add(hl);
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(40, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xeeeeee }));
-  dome.position.copy(idxWorld(S.habitatIdx)); markerGroup.add(dome);
+  const hb = badgeSprite('habitat', 0.055); hb.position.copy(idxWorld(S.habitatIdx)).add(new THREE.Vector3(0, 80, 0)); hb.userData.habitat = true; markerGroup.add(hb);
+  const hl = labelSprite('Habitat'); hl.position.copy(idxWorld(S.habitatIdx)).add(new THREE.Vector3(0, 80, 0)); hl.center.set(0.5, -0.9); markerGroup.add(hl);
+  placeHabitat();
   if (!S.places) S.sites.sites.forEach((s, k) => {
     const b = badgeSprite(s.resource || 'sediment'); b.position.copy(idxWorld(S.siteIdx[k])).add(new THREE.Vector3(0, 50, 0));
     b.userData.site = k; markerGroup.add(b);
@@ -257,12 +274,15 @@ function renderResourceList() {
   const inside = S.places.places.map((p, k) => ({ p, k })).filter(({ p }) => p._xy.inside);
   const kinds = [...new Set(inside.map(({ p }) => p.resource))];
   $('resList').innerHTML = `<div class="kinds">${kinds.map((kd) => `<label class="kind"><input type="checkbox" data-kind="${kd}" ${S.hiddenKinds.has(kd) ? '' : 'checked'}>${badgeImgHTML(kd, 18)} ${RESOURCE_TYPES[kd].en}</label>`).join('')}</div>` +
-    inside.map(({ p, k }) => `<div class="site">${badgeImgHTML(p.resource, 20)}<span class="pn" data-k="${k}">${p.name}</span><small>sol ${p.sol}</small></div>`).join('') +
+    inside.map(({ p, k }) => `<div class="site">${badgeImgHTML(p.resource, 20)}<span class="pn" data-k="${k}" role="button" tabindex="0">${p.name}</span><small>sol ${p.sol}</small></div>`).join('') +
     `<p class="note">${inside.length}/${S.places.places.length} places inside this map. ${ICON_ATTRIBUTION}</p>`;
   $('resList').querySelectorAll('input[data-kind]').forEach((cb) => cb.onchange = () => {
     cb.checked ? S.hiddenKinds.delete(cb.dataset.kind) : S.hiddenKinds.add(cb.dataset.kind); buildPlaces();
   });
-  $('resList').querySelectorAll('.pn').forEach((el) => el.onclick = () => { showPlaceCard(+el.dataset.k); flyTo(S.places.places[+el.dataset.k]._xy); });
+  $('resList').querySelectorAll('.pn').forEach((el) => {
+    el.onclick = () => { showPlaceCard(+el.dataset.k); flyTo(S.places.places[+el.dataset.k]._xy); };
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); } });
+  });
 }
 function flyTo(q) {
   if (S.fp) return;
@@ -306,22 +326,22 @@ function routeBlurb(k) {
   const R = S.routes, r = R[k], sh = R.shortest, budget = CONFIG.evaLimitH.value * 3600;
   if (!r) return `No route under the ${CONFIG.maxSlopeDeg.value}° slope limit.`;
   const margin = budget - r.durationS;
-  const head = `${(r.distanceM / 1000).toFixed(1)} km · ${fmtHM(r.durationS)} · max ${r.maxSlopeDeg.toFixed(0)}°`;
+  const head = `${(r.distanceM / 1000).toFixed(1)} km&ensp;${fmtHM(r.durationS)} h&ensp;max ${r.maxSlopeDeg.toFixed(0)}°`;
   let why = '';
   if (k === 'shortest') why = 'Fastest way to the destination within the slope limit.';
-  if (k === 'gentlest') why = sh ? (Math.abs(r.distanceM - sh.distanceM) < 50 ? 'Same line as Shortest here: no gentler option exists.'
-    : `+${((r.distanceM - sh.distanceM) / 1000).toFixed(1)} km vs Shortest to keep max slope ${r.maxSlopeDeg.toFixed(0)}° (vs ${sh.maxSlopeDeg.toFixed(0)}°).`) : 'Avoids steep ground.';
+  if (k === 'gentlest') why = sh ? ((overlap(sh, r) > 0.9 || (Math.abs(r.distanceM - sh.distanceM) < 100 && Math.abs(r.maxSlopeDeg - sh.maxSlopeDeg) < 1)) ? 'As easy as Shortest here: the ground is already gentle.'
+    : `${r.distanceM >= sh.distanceM ? '+' : ''}${((r.distanceM - sh.distanceM) / 1000).toFixed(1)} km vs Shortest to keep max slope ${r.maxSlopeDeg.toFixed(0)}° (vs ${sh.maxSlopeDeg.toFixed(0)}°).`) : 'Avoids steep ground.';
   if (k === 'science') {
     const names = r.visited.map((id) => S.sites.sites.find((s) => s.id === id)?.name || id);
     why = names.length ? `Samples ${names.length} site${names.length > 1 ? 's' : ''} on the way: ${names.join(', ')}.` : 'No extra science site fits in the EVA budget.';
     if (sh) why += ` +${fmtHM(Math.max(0, r.durationS - sh.durationS))} vs Shortest.`;
   }
-  return `<b>${head}</b><br>${why}<br><span class="${margin < 0 ? 'bad' : 'ok'}">${margin < 0 ? 'Over budget by ' + fmtHM(-margin) : 'Return margin ' + fmtHM(margin)}</span>`;
+  return `<div class="rhead">${head}</div><div class="rtxt">${why} <span class="${margin < 0 ? 'bad' : 'ok'}">${margin < 0 ? 'Over budget by ' + fmtHM(-margin) + '.' : fmtHM(margin) + ' spare to get home.'}</span></div>`;
 }
 
 function renderCards() {
   $('routeCards').innerHTML = Object.keys(ROUTE_STYLE).map((k) => `<div class="rcard ${k === S.sel ? 'sel' : ''}" data-k="${k}" style="--c:#${ROUTE_STYLE[k].color.toString(16).padStart(6, '0')}">
-    <div class="rname">${ROUTE_STYLE[k].name}</div><div class="rtxt">${routeBlurb(k)}</div></div>`).join('');
+    <div class="rname">${ROUTE_STYLE[k].name}</div>${routeBlurb(k)}</div>`).join('');
   $('routeCards').querySelectorAll('.rcard').forEach((c) => c.onclick = () => { if (!S.routes[c.dataset.k]) return; S.sel = c.dataset.k; buildRouteMeshes(); renderTable(); drawTrack(); update(0); });
 }
 
@@ -355,22 +375,9 @@ function renderTable() {
   $('routeNote').innerHTML = notes.join('<br>');
 }
 
+const profile = new ProfileStrip($('profile'), (t) => { S.tS = t; update(0); });
 function drawTrack() {
-  const c = $('track'), g = c.getContext('2d');
-  c.width = c.clientWidth;
-  g.clearRect(0, 0, c.width, c.height);
-  const r = S.routes[S.sel]; if (!r) return;
-  const D = r.durationS, wpx = c.width;
-  for (let k = 1; k < r.samples.length; k++) {
-    const a = r.samples[k - 1], b = r.samples[k];
-    const x0 = (a.t / D) * wpx, x1 = (b.t / D) * wpx;
-    g.fillStyle = b.phase === 'stop' ? '#ffffff' : b.grade > 0.08 ? '#ff7043' : b.grade < -0.08 ? '#8d6e63' : b.phase === 'return' ? '#5d4037' : '#a1887f';
-    g.fillRect(x0, 0, Math.max(1, x1 - x0), 12);
-  }
-  const mark = (sc, color) => { if (sc.on && sc.startS < D) { g.fillStyle = color; g.fillRect((sc.startS / D) * wpx - 1, 0, 3, 12); } };
-  mark(env.scenarios.dust, '#ffca28'); mark(env.scenarios.sep, '#ff1744');
-  const budget = CONFIG.evaLimitH.value * 3600;
-  if (budget < D) { g.fillStyle = '#e040fb'; g.fillRect((budget / D) * wpx - 1, 0, 3, 12); }
+  profile.setRoute(S.routes[S.sel], { dust: env.scenarios.dust, sep: env.scenarios.sep, budgetS: CONFIG.evaLimitH.value * 3600 });
 }
 
 // ---------- simulation update ----------
@@ -381,7 +388,7 @@ function latLon(x, y) {
   return `${lat.toFixed(5)}°N, ${lon.toFixed(5)}°E`;
 }
 
-let lastState = null;
+let lastState = null, lastHud = '';
 function update(dtReal) {
   const r = S.routes[S.sel];
   if (!r) return;
@@ -430,34 +437,37 @@ function update(dtReal) {
 
   // HUD
   const hud = [];
-  if (state.flags.includes('radiation')) hud.push(`<div class="hudmsg rad">☢ RADIATION: ${Math.round(dr.v)} µGy/day &gt; ${CONFIG.radWarnUGyPerDay.value} (illustrative threshold) — return to habitat / shelter</div>`);
-  if (state.flags.includes('dust')) hud.push(`<div class="hudmsg dust">Dust: τ=${tau.v.toFixed(1)} · reduced visibility, abrasion & electrostatic risk to equipment</div>`);
-  if (S.tS > CONFIG.evaLimitH.value * 3600) hud.push('<div class="hudmsg margin">EVA time budget exceeded</div>');
-  if (S.fp) hud.push('<div class="hudmsg fp">First person · drag to look around · F to exit · terrain ×' + S.exag + ' vertical exaggeration</div>');
-  $('hud').innerHTML = hud.join('');
+  if (state.flags.includes('radiation')) hud.push(`<div class="hudmsg rad">☢ Radiation ${Math.round(dr.v)} µGy/day, above the ${CONFIG.radWarnUGyPerDay.value} warning level. Head back to the habitat.</div>`);
+  if (state.flags.includes('dust')) hud.push(`<div class="hudmsg dust">Dust storm, τ ${tau.v.toFixed(1)}. Visibility down; protect seals, optics and solar panels.</div>`);
+  if (S.tS > CONFIG.evaLimitH.value * 3600) hud.push('<div class="hudmsg margin">Past the EVA time budget</div>');
+  if (S.fp) hud.push('<div class="hudmsg fp">First person. Drag to look around, press F to leave. Relief ×' + S.exag + '.</div>');
+  const hudHTML = hud.join(''); if (hudHTML !== lastHud) { $('hud').innerHTML = hudHTML; lastHud = hudHTML; }
 
-  // env panel
-  const row = (k, v, x) => `<div class="k">${k}</div><div class="v">${v} ${chip(x.label)}</div><div class="src">${x.src}</div>`;
-  const ltst = env.ltstH(S.tS);
+  // conditions tiles
+  const tile = (k, v, unit, x, extra = '', cls = '') => `<div class="tile ${cls}" title="${x.src}"><div class="k"><span>${k}</span>${chip(x.label)}</div><div class="v">${v}<small>${unit}</small></div><div class="src">${[x.short, extra].filter(Boolean).join('. ')}</div></div>`;
   const ll = latLon(p.x, p.y);
-  $('envPanel').innerHTML = `<div class="env">
-    <div class="k">LTST / elapsed</div><div class="v">${String(Math.floor(ltst)).padStart(2, '0')}:${String(Math.floor((ltst % 1) * 60)).padStart(2, '0')} · T+${fmtHM(S.tS)}</div><div class="src">${CONFIG.evaStartLtstH.value}:00 LTST start ${chip(LABEL.ASSUMP)} · 1 LTST hour = ${(MARS_HOUR_S / 3600).toFixed(4)} h</div>
-    <div class="k">Position</div><div class="v">${ll || `${(p.x / 1000).toFixed(2)} km E, ${(p.y / 1000).toFixed(2)} km S`}</div><div class="src">elevation ${z.toFixed(1)} m · local slope ${p.slope.toFixed(1)}° · grade ${(p.grade * 100).toFixed(0)}% ${S.t.source.kind === 'real' ? chip(LABEL.OBS) : '(synthetic terrain)'}</div>
-    ${row('Air temperature', `${T.v.toFixed(1)} ${T.unit}`, T)}
-    ${row('Pressure', `${P.v.toFixed(0)} ${P.unit}`, P)}
-    ${row('Wind speed', `${Wd.v.toFixed(1)} ${Wd.unit}`, { ...Wd, src: `${Wd.src} · dynamic pressure ≈ ${Wd.dynamicPressurePa.toFixed(2)} Pa → mechanical force on crew negligible; wind matters as a dust driver` })}
-    ${row('Column dust optical depth τ', tau.v.toFixed(2), tau)}
-    ${row('Direct-beam transmission', `${(beam.v * 100).toFixed(0)} %`, beam)}
-    ${row('Dose rate', `${Math.round(dr.v)} ${dr.unit}`, dr)}
-    ${row('Cumulative EVA dose', `${cum.v.toFixed(1)} ${cum.unit}`, cum)}
-    <div class="k">Crew state</div><div class="v">${GAIT_TEXT[state.gait]}</div><div class="src">${CONFIG.crewSize.value} astronauts ${chip(LABEL.ASSUMP)} · drawn ×${SCALE} for visibility · walking speed: Tobler × suit factor ${chip(LABEL.ASSUMP)}</div>
+  const terr = { label: S.t.source.kind === 'real' ? LABEL.OBS : LABEL.ASSUMP, src: S.t.source.kind === 'real' ? 'CTX stereo DEM' : 'synthetic terrain', short: S.t.source.kind === 'real' ? 'CTX stereo elevation model' : 'Synthetic terrain' };
+  $('envPanel').innerHTML = `<div class="tiles">
+    ${tile('Air temperature', T.v.toFixed(0), ' °C', T)}
+    ${tile('Pressure', P.v.toFixed(0), ' Pa', P)}
+    ${tile('Wind', Wd.v.toFixed(1), ' m/s', Wd, `Pushes with ${Wd.dynamicPressurePa.toFixed(2)} Pa: too little to move a person, enough to move dust`, 'wide')}
+    ${tile('Dust optical depth', tau.v.toFixed(2), '', tau)}
+    ${tile('Direct sunlight', (beam.v * 100).toFixed(0), ' %', beam)}
+    ${tile('Dose rate', Math.round(dr.v), ' µGy/day', dr, '', dr.v > CONFIG.radWarnUGyPerDay.value ? 'alert' : '')}
+    ${tile('Dose this EVA', cum.v.toFixed(1), ' µGy', cum)}
+    ${tile('Ground', `${z.toFixed(0)}`, ` m, ${p.slope.toFixed(0)}° slope`, terr, ll || `${(p.x / 1000).toFixed(2)} km E, ${(p.y / 1000).toFixed(2)} km S`, 'wide')}
   </div>`;
 
   // arrival preview when stopped at a site
   showPreview(p.phase === 'stop' ? p.stopTag : null);
 
-  $('scrub').value = Math.round((S.tS / r.durationS) * 1000);
-  $('clock').textContent = `T+${fmtHM(S.tS)} / ${fmtHM(r.durationS)} · ${p.phase === 'stop' ? 'stop @ ' + p.stopTag : p.phase}`;
+  const ltst = env.ltstH(S.tS);
+  $('clock').innerHTML = `<div class="big">T+${fmtHM(S.tS)}</div><div class="small">${String(Math.floor(ltst)).padStart(2, '0')}:${String(Math.floor((ltst % 1) * 60)).padStart(2, '0')} local solar time<br>of ${fmtHM(r.durationS)} planned</div>`;
+  profile.draw(S.tS, state, p, dtReal, walking);
+  // sun follows local solar time (simple model): low and warm in the morning, high at noon
+  const sunEl = Math.max(0.05, Math.sin((Math.PI * (ltst - 6)) / 12)) * 1.2, sunAz = (ltst - 12) / 12 * Math.PI;
+  sun.position.set(Math.sin(sunAz) * 5000 * Math.cos(sunEl), Math.sin(sunEl) * 5000, -Math.cos(sunAz) * 2500);
+  sun.intensity = 0.6 + 1.8 * beam.v + 0.4; hemi.intensity = 0.55 + 0.5 * (1 - beam.v);
 }
 
 let previewKey = null;
@@ -484,22 +494,35 @@ function showPreview(tag) {
 // ---------- UI wiring ----------
 function renderSites() {
   $('siteList').innerHTML = [
-    `<div class="site">${badgeImgHTML('habitat', 20)}<span class="pn" id="habItem">${S.sites.habitat.name} ${chip(S.sites.habitat.label || LABEL.ASSUMP)}</span></div>`,
-    ...S.sites.sites.map((s, k) => `<div class="site">${badgeImgHTML(s.resource || 'sediment', 20)}<span class="pn" data-s="${k}">${s.id} ${s.name} ${chip(s.label || LABEL.ASSUMP)}</span><button data-k="${k}">Go here</button></div>`),
+    `<div class="site">${badgeImgHTML('habitat', 20)}<span class="pn" id="habItem" role="button" tabindex="0">${S.sites.habitat.name}</span></div>`,
+    ...S.sites.sites.map((s, k) => `<div class="site">${badgeImgHTML(s.resource || 'sediment', 20)}<span class="pn" data-s="${k}" role="button" tabindex="0">${s.id} ${s.name} ${chip(s.label || LABEL.ASSUMP)}</span><button data-k="${k}" aria-label="Set ${s.name} as destination">Go here</button></div>`),
   ].join('');
   $('siteList').querySelectorAll('button').forEach((b) => b.onclick = () => { S.destIdx = S.siteIdx[+b.dataset.k]; recompute(); });
   $('siteList').querySelectorAll('.pn[data-s]').forEach((el) => el.onclick = () => showSiteCard(+el.dataset.s));
   $('habItem').onclick = showHabitatCard;
+  $('siteList').querySelectorAll('[role=button]').forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); } }));
+}
+
+function selectTab(name) {
+  document.querySelectorAll('[role=tab]').forEach((t) => { const on = t.dataset.tab === name; t.setAttribute('aria-selected', on); t.tabIndex = on ? 0 : -1; });
+  document.querySelectorAll('[role=tabpanel]').forEach((p) => { p.hidden = p.id !== 'tab-' + name; });
 }
 
 function wire() {
+  document.querySelectorAll('[role=tab]').forEach((t, i, all) => {
+    t.onclick = () => selectTab(t.dataset.tab);
+    t.addEventListener('keydown', (e) => {
+      const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0; if (!d) return;
+      const n = all[(i + d + all.length) % all.length]; selectTab(n.dataset.tab); n.focus();
+    });
+  });
   $('maxSlope').value = CONFIG.maxSlopeDeg.value;
   $('evaLimit').value = CONFIG.evaLimitH.value;
   $('exag').value = S.exag;
   $('maxSlope').onchange = (e) => { CONFIG.maxSlopeDeg.value = +e.target.value; colorTerrain(); recompute(); };
   $('evaLimit').onchange = (e) => { CONFIG.evaLimitH.value = +e.target.value; recompute(); };
   $('slopeOverlay').onchange = colorTerrain;
-  $('exag').oninput = (e) => { S.exag = +e.target.value; buildTerrainMesh(); buildRouteMeshes(); buildMarkers(); buildPlaces(); update(0); };
+  $('exag').oninput = (e) => { S.exag = +e.target.value; buildTerrainMesh(); buildRouteMeshes(); buildMarkers(); buildPlaces(); drawTrack(); update(0); };
   const sc = () => {
     env.scenarios.dust = { on: $('scDust').checked, startS: +$('scDustT').value * 3600 };
     env.scenarios.sep = { on: $('scSep').checked, startS: +$('scSepT').value * 3600 };
@@ -508,7 +531,7 @@ function wire() {
   ['scDust', 'scDustT', 'scSep', 'scSepT'].forEach((id) => $(id).onchange = sc);
   const setFP = (on) => {
     S.fp = on; $('fpBtn').classList.toggle('on', on); controls.enabled = !on;
-    routeGroup.visible = !on; crew.forEach((c) => c.scale.setScalar(on ? 1 : SCALE));
+    routeGroup.visible = !on; crew.forEach((c) => c.scale.setScalar(on ? 1 : SCALE)); placeHabitat();
     camera.near = on ? 0.3 : 5; camera.fov = on ? 70 : 50; camera.updateProjectionMatrix();
     S.fpYawOff = 0; S.fpPitch = -0.08;
     if (!on) { const c = crew[0].position; controls.target.copy(c); camera.position.copy(c).add(new THREE.Vector3(-260, 240, 420)); }
@@ -517,9 +540,9 @@ function wire() {
   $('fpBtn').onclick = () => setFP(!S.fp);
   addEventListener('keydown', (e) => { if (e.key === 'f' || e.key === 'F') { if (e.target.tagName !== 'INPUT') setFP(!S.fp); } if (e.key === ' ' && e.target.tagName !== 'INPUT') { e.preventDefault(); $('play').click(); } });
   $('showTrav').onchange = () => { travGroup.visible = $('showTrav').checked; };
-  $('detailsBtn').onclick = () => { const t = $('routeTable'); t.classList.toggle('hidden'); $('detailsBtn').textContent = t.classList.contains('hidden') ? 'Show detailed comparison ▾' : 'Hide detailed comparison ▴'; };
-  $('play').onclick = () => { S.playing = !S.playing; $('play').textContent = S.playing ? '❚❚' : '▶'; };
-  $('scrub').oninput = (e) => { const r = S.routes[S.sel]; if (r) { S.tS = (e.target.value / 1000) * r.durationS; update(0); } };
+  $('detailsBtn').onclick = () => { const t = $('routeTable'); t.classList.toggle('hidden'); $('routeNote').classList.toggle('hidden', t.classList.contains('hidden')); $('detailsBtn').textContent = t.classList.contains('hidden') ? 'Show detailed comparison' : 'Hide detailed comparison'; };
+  $('play').onclick = () => { S.playing = !S.playing; $('play').textContent = S.playing ? '❚❚' : '▶'; $('play').setAttribute('aria-label', S.playing ? 'Pause' : 'Play'); if (S.playing) selectTab('live'); };
+
 
   // click-to-set destination (ignore drags)
   let down = null, last = null;
@@ -563,6 +586,7 @@ function loop(now) {
     if (S.tS >= r.durationS) { S.playing = false; $('play').textContent = '▶'; }
   }
   if (r) update(dt);
+  tickHabitat(habitat, now / 1000);
   controls.update();
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
@@ -594,8 +618,8 @@ async function main() {
   env.refElevation = terrain.z[S.habitatIdx];
 
   const badge = $('dataBadge');
-  if (terrain.source.kind === 'real') { badge.className = 'badge real'; badge.textContent = `Terrain: ${terrain.source.dem}`; }
-  else { badge.className = 'badge synth'; badge.textContent = 'SYNTHETIC TERRAIN — run scripts/download_data.ps1 + preprocess for real Jezero data'; }
+  if (terrain.source.kind === 'real') { badge.className = 'badge real'; badge.textContent = /ctx/i.test(terrain.source.dem) ? 'Real terrain: USGS CTX elevation model' : /hirise/i.test(terrain.source.dem) ? 'Real terrain: HiRISE elevation model' : 'Real terrain'; }
+  else { badge.className = 'badge synth'; badge.textContent = 'Synthetic terrain. Run the data scripts for real Jezero ground.'; }
   badge.title = `DEM: ${terrain.source.dem}\nOptical: ${terrain.source.ortho || 'none'}\nMEDA: ${env.meda ? 'sol ' + env.meda.sol : 'not loaded (built-in model)'}\nRAD: ${env.rad.sep ? 'baseline + SEP profile' : 'baseline only'}`;
 
   buildTerrainMesh();

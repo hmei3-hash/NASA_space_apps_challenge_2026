@@ -104,7 +104,7 @@ if a.ortho:
     valid = np.isfinite(arr) & (arr > 0) & ((arr != onodata) if onodata is not None else True)
     lo, hi = np.percentile(arr[valid], [1, 99]) if valid.any() else (0, 1)
     img = np.clip((arr - lo) / max(1e-6, hi - lo) * 255, 0, 255).astype(np.uint8)
-    img[~valid] = 0
+    img[~valid] = int(np.median(img[valid])) if valid.any() else 128  # neutral fill outside image coverage
     mem = gdal.GetDriverByName("MEM").Create("", img.shape[1], img.shape[0], 1, gdal.GDT_Byte)
     mem.GetRasterBand(1).WriteArray(img)
     gdal.GetDriverByName("JPEG").CreateCopy(str(out / "ortho.jpg"), mem, options=["QUALITY=88"])

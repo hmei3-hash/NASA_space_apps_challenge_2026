@@ -52,10 +52,10 @@ export class Environment {
     const h = this.ltstH(tS);
     if (this.meda) {
       const v = this._medaInterp('T', h);
-      if (v !== null) return { v, unit: '°C', label: LABEL.REPLAY, src: `MEDA ATS, sol ${this.meda.sol}, at rover` };
+      if (v !== null) return { v, unit: '°C', label: LABEL.REPLAY, src: `MEDA ATS, sol ${this.meda.sol}, at rover`, short: `MEDA sol ${this.meda.sol}, at the rover` };
     }
     const v = -78 + 58 * Math.max(0, Math.sin((Math.PI * (h - 6)) / 13));
-    return { v, unit: '°C', label: LABEL.MODEL, src: 'built-in diurnal placeholder (not MCD)' };
+    return { v, unit: '°C', label: LABEL.MODEL, src: 'built-in diurnal placeholder (not MCD)', short: 'Placeholder daily cycle, not measured' };
   }
 
   pressure(tS, z) {
@@ -69,7 +69,8 @@ export class Environment {
     const dz = z - this.refElevation;
     const v = p0 * Math.exp(-dz / CONFIG.pressureScaleHeightM.value);
     if (Math.abs(dz) > 1) { label = `${label} + ${LABEL.MODEL}`; src += ', shifted to local elevation (scale height)'; }
-    return { v, unit: 'Pa', label, src };
+    const short = label.startsWith(LABEL.REPLAY) ? `MEDA at the rover, adjusted to this elevation` : 'Placeholder daily cycle, not measured';
+    return { v, unit: 'Pa', label, src, short };
   }
 
   wind(tS) {
@@ -82,7 +83,8 @@ export class Environment {
     if (v === null) v = 2.5 + 5 * Math.exp(-(((h - 13.5) / 2.5) ** 2));
     if (this.scenarios.dust.on && tS >= this.scenarios.dust.startS) { v = Math.max(v, 15); label = LABEL.SCENARIO; src = 'dust-storm scenario'; }
     const q = 0.5 * RHO_AIR * v * v;
-    return { v, unit: 'm/s', label, src, dynamicPressurePa: q };
+    const short = label === LABEL.REPLAY ? 'MEDA at the rover' : label === LABEL.SCENARIO ? 'Dust storm scenario' : 'Placeholder daily cycle';
+    return { v, unit: 'm/s', label, src, short, dynamicPressurePa: q };
   }
 
   dustTau(tS) {
@@ -90,9 +92,9 @@ export class Environment {
     const d = this.scenarios.dust;
     if (d.on && tS >= d.startS) {
       const ramp = Math.min(1, (tS - d.startS) / 1800);
-      return { v: base + (CONFIG.dustTauStorm.value - base) * ramp, label: LABEL.SCENARIO, src: 'injected dust-storm event' };
+      return { v: base + (CONFIG.dustTauStorm.value - base) * ramp, label: LABEL.SCENARIO, src: 'injected dust-storm event', short: 'Injected dust storm' };
     }
-    return { v: base, label: LABEL.ASSUMP, src: 'typical non-storm column dust optical depth' };
+    return { v: base, label: LABEL.ASSUMP, src: 'typical non-storm column dust optical depth', short: 'Typical clear-season value' };
   }
 
   /** Direct solar beam transmission exp(-tau/mu), mu from a crude LTST sun-elevation model. */
@@ -101,7 +103,7 @@ export class Environment {
     const elev = Math.max(0, Math.sin((Math.PI * (h - 6)) / 12)) * (Math.PI / 2) * 0.85;
     const mu = Math.sin(elev);
     const tau = this.dustTau(tS).v;
-    return { v: mu > 0.02 ? Math.exp(-tau / mu) : 0, label: LABEL.MODEL, src: 'Beer–Lambert, simple sun-elevation model' };
+    return { v: mu > 0.02 ? Math.exp(-tau / mu) : 0, label: LABEL.MODEL, src: 'Beer–Lambert, simple sun-elevation model', short: 'From dust depth and sun height' };
   }
 
   doseRate(tS) {
@@ -114,18 +116,18 @@ export class Environment {
       for (let k = 1; k < P.tH.length; k++) {
         if (P.tH[k] >= hrs) { const f = (hrs - P.tH[k - 1]) / (P.tH[k] - P.tH[k - 1]); v = P.uGyPerDay[k - 1] + (P.uGyPerDay[k] - P.uGyPerDay[k - 1]) * f; break; }
       }
-      return { v, unit: 'µGy/day', label: LABEL.SCENARIO, src: `SEP profile observed by RAD (${P.event}), replayed as a scenario` };
+      return { v, unit: 'µGy/day', label: LABEL.SCENARIO, src: `SEP profile observed by RAD (${P.event}), replayed as a scenario`, short: 'May 2024 RAD solar event, replayed' };
     }
     if (s.on && !this.rad.sep && tS >= s.startS) {
-      return { v: b.uGyPerDay * 20, unit: 'µGy/day', label: LABEL.SCENARIO, src: 'SEP scenario (×20 placeholder; run preprocess_rad.py for the observed profile)' };
+      return { v: b.uGyPerDay * 20, unit: 'µGy/day', label: LABEL.SCENARIO, src: 'SEP scenario (×20 placeholder; run preprocess_rad.py for the observed profile)', short: 'Placeholder solar event (×20)' };
     }
-    return { v: b.uGyPerDay, unit: 'µGy/day', label: LABEL.OBS, src: `RAD ${b.signal}, ${b.window}, ${b.site} — not Jezero` };
+    return { v: b.uGyPerDay, unit: 'µGy/day', label: LABEL.OBS, src: `RAD ${b.signal}, ${b.window}, ${b.site} — not Jezero`, short: 'Curiosity RAD at Gale crater, not Jezero' };
   }
 
   /** Cumulative dose (µGy) from 0..tS by 60 s integration. */
   cumulativeDose(tS) {
     let acc = 0;
     for (let t = 0; t < tS; t += 60) acc += this.doseRate(t).v * (Math.min(60, tS - t) / 86400);
-    return { v: acc, unit: 'µGy', label: LABEL.MODEL, src: 'dose rate × time; no terrain shielding modeled' };
+    return { v: acc, unit: 'µGy', label: LABEL.MODEL, src: 'dose rate × time; no terrain shielding modeled', short: 'Dose rate × time, no shielding modelled' };
   }
 }
