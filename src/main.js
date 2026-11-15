@@ -14,6 +14,7 @@ import { RESOURCE_TYPES, badgeSprite, badgeImgHTML } from './resources.js';
 import { ICON_ATTRIBUTION } from './icons.js';
 import { makeHabitat, tickHabitat, HAB_SCALE } from './habitat.js';
 import { ProfileStrip, GAIT_LABEL } from './profile.js';
+import { GlobeView } from './globe.js';
 
 const $ = (id) => document.getElementById(id);
 const CHIP = { [LABEL.OBS]: 'o', [LABEL.REPLAY]: 'r', [LABEL.MODEL]: 'm', [LABEL.ASSUMP]: 'a', [LABEL.SCENARIO]: 's' };
@@ -25,7 +26,7 @@ const MARS_R = 3396190;
 const S = {
   t: null, sites: null, habitatIdx: 0, destIdx: 0, siteIdx: [], routes: {}, sel: 'gentlest',
   tS: 0, playing: false, exag: CONFIG.verticalExaggeration, zmin: 0, images: [],
-  places: null, fp: false, fpYaw: 0, fpYawOff: 0, fpPitch: -0.08, hiddenKinds: new Set(),
+  places: null, view: 'globe', fp: false, fpYaw: 0, fpYawOff: 0, fpPitch: -0.08, hiddenKinds: new Set(),
 };
 const env = new Environment();
 
@@ -59,6 +60,49 @@ scene.add(dust);
 function resize() {
   const w = viewport.clientWidth, h = viewport.clientHeight;
   renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+  globe?.resize(w, h);
+}
+let globe = null;
+const GALE = { lat: -5.37, lon: 137.81 };
+
+function siteInfo() {
+  const c = S.t.source.center || { lat: 18.455, lon: 77.42 };
+  return { lat: c.lat, lon: c.lon, sizeKm: W() / 1000 };
+}
+
+function showGlobeCard(which = 'site') {
+  const el = $('globeCard'), s = siteInfo();
+  if (which === 'gale') {
+    el.innerHTML = `<h2>Gale crater</h2><p class="coords">5.4°S, 137.8°E</p>
+      <p>Curiosity has measured surface radiation here since 2012. Marswalk's dose rates come from this instrument, about ${Math.round(globe.galeKm).toLocaleString('en-US')} km from Jezero, so they are labelled as Gale data, not Jezero data.</p>
+      <button class="ghost" id="gcBack">Back to Jezero</button>`;
+    $('gcBack').onclick = () => showGlobeCard('site');
+  } else {
+    el.innerHTML = `<h2>Jezero crater</h2><p class="coords">${s.lat.toFixed(2)}°N, ${s.lon.toFixed(2)}°E</p>
+      <p>A 45 km crater that once held a lake. Perseverance has explored its delta since 2021. The box marks the ${Math.round(s.sizeKm)} km EVA planning area.</p>
+      <button class="go" id="gcFly">Fly in to the EVA site</button>
+      <p class="src">Globe: ${globe.source || 'loading…'}</p>`;
+    $('gcFly').onclick = flyIn;
+  }
+}
+
+function setView(v) {
+  S.view = v;
+  const g = v === 'globe';
+  document.body.classList.toggle('globe-mode', g);
+  controls.enabled = !g && !S.fp;
+  globe.setActive(g);
+  $('globeBtn').setAttribute('aria-pressed', g);
+  if (g) { if (S.fp) $('fpBtn').click(); showGlobeCard('site'); }
+}
+
+function flyIn() {
+  $('gcFly').disabled = true;
+  globe.flyIn(() => {
+    setView('local');
+    $('fade').style.opacity = 1;
+    requestAnimationFrame(() => { $('fade').style.transition = 'opacity 0.9s'; $('fade').style.opacity = 0; setTimeout(() => { $('fade').style.transition = ''; }, 950); });
+  });
 }
 addEventListener('resize', resize);
 
@@ -530,6 +574,7 @@ function wire() {
   };
   ['scDust', 'scDustT', 'scSep', 'scSepT'].forEach((id) => $(id).onchange = sc);
   const setFP = (on) => {
+    if (on && S.view === 'globe') return;
     S.fp = on; $('fpBtn').classList.toggle('on', on); controls.enabled = !on;
     routeGroup.visible = !on; crew.forEach((c) => c.scale.setScalar(on ? 1 : SCALE)); placeHabitat();
     camera.near = on ? 0.3 : 5; camera.fov = on ? 70 : 50; camera.updateProjectionMatrix();
@@ -555,6 +600,7 @@ function wire() {
   });
   renderer.domElement.addEventListener('pointerup', (e) => {
     last = null;
+    if (S.view === 'globe') return;
     if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
     const rect = renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
@@ -584,6 +630,12 @@ function loop(now) {
   if (S.playing && r) {
     S.tS = Math.min(r.durationS, S.tS + dt * +$('speed').value);
     if (S.tS >= r.durationS) { S.playing = false; $('play').textContent = '▶'; }
+  }
+  if (S.view === 'globe') {
+    const fade = globe.render(dt);
+    if (fade > 0) $('fade').style.opacity = fade;
+    requestAnimationFrame(loop);
+    return;
   }
   if (r) update(dt);
   tickHabitat(habitat, now / 1000);
@@ -627,6 +679,11 @@ async function main() {
   controls.target.copy(h0);
   camera.position.copy(h0).add(new THREE.Vector3(-260, 240, 420));
   renderSites(); renderResourceList(); wire(); buildPlaces(); recompute();
+  globe = new GlobeView(renderer, renderer.domElement, { site: siteInfo(), gale: GALE, onSelect: (w) => showGlobeCard(w) });
+  globe.onSource = () => { if (S.view === 'globe') showGlobeCard('site'); };
+  resize();
+  $('globeBtn').onclick = () => setView(S.view === 'globe' ? 'local' : 'globe');
+  setView('globe');
   requestAnimationFrame(loop);
 }
 main();
