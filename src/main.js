@@ -19,7 +19,8 @@ import { ProfileStrip, GAIT_LABEL } from './profile.js';
 import { GlobeView } from './globe.js';
 import { Visor, bearing, yawToHeading } from './visor.js';
 import { makeDustWall, updateDustWall } from './dustwall.js';
-import { StormSim, SCENARIOS, BASES, SOL_S } from './stormsim.js';
+import { StormSim, SCENARIOS, BASES, SOL_S, inferStorm } from './stormsim.js';
+import { RAD, networkAlert, limitLeftMSv } from './radmodel.js';
 
 const $ = (id) => document.getElementById(id);
 const CHIP = { [LABEL.OBS]: 'o', [LABEL.REPLAY]: 'r', [LABEL.MODEL]: 'm', [LABEL.ASSUMP]: 'a', [LABEL.SCENARIO]: 's' };
@@ -165,14 +166,19 @@ function tickPlanet(dt) {
   const area = sim.areaKm2(sol), pct = (area / (4 * Math.PI * 3389.5 ** 2)) * 100;
   const cls = area > 1e7 ? 'major, above 10⁷ km²' : area > 1.6e6 ? 'regional, above 1.6×10⁶ km²' : 'local';
   $('ppFacts').innerHTML = `<span>${sc.season}</span><span>Front ${sim.speedMs} m/s ${chip($('ppSpeed').value ? LABEL.ASSUMP : LABEL.MODEL)}</span><span>Dust over ${pct < 10 ? pct.toFixed(1) : Math.round(pct)}% of Mars (${cls})</span>`;
+  const hits = sim.arrivals.filter((a) => a.sol !== null && a.sol <= sol).sort((a, b) => a.sol - b.sol);
+  const inf = inferStorm(hits.map((h) => ({ id: h.id, sol: h.sol })), sol);
+  globe.setCandidates(inf?.candidates);
   const warn = sim.warning();
-  $('ppTable').innerHTML = `<tr><th>Base</th><th>Dust arrives</th><th>Shared warning</th><th>Status</th></tr>` + warn.map((w, i) =>
-    `<tr class="${st[i]}"><td>${w.name}</td><td>${w.sol === null ? 'not reached' : 'sol ' + w.sol.toFixed(1)}</td><td>${w.sol === null ? '–' : fmtSols(w.shared)}</td><td>${st[i] === 'storm' ? 'in the storm' : st[i] === 'watch' ? `watch, ${fmtSols(w.sol - sol)} left` : 'clear'}</td></tr>`).join('') +
-    `<tr class="foot"><td colspan="4">Alone, a base hears nothing until its own stations see the front: about 1 hour with a 100 km station ring, nothing without one.</td></tr>`;
-  const log = sim.log(sol);
+  const etaCell = (w) => { const hit = hits.find((h) => h.id === w.id); if (hit) return `hit, sol ${hit.sol.toFixed(1)}`; const e = inf?.eta[w.id]; return e ? `sol ${e.lo.toFixed(1)}–${e.hi.toFixed(1)}` : (hits.length ? 'need 2 reports' : '–'); };
+  $('ppTable').innerHTML = `<tr><th>Base</th><th>Bases' estimate</th><th>Actually arrives</th><th>Status</th></tr>` + warn.map((w, i) =>
+    `<tr class="${st[i]}"><td>${w.name}</td><td>${etaCell(w)}</td><td>${w.sol === null ? 'not reached' : 'sol ' + w.sol.toFixed(1)}</td><td>${st[i] === 'storm' ? 'in the storm' : st[i] === 'watch' ? 'watch' : 'clear'}</td></tr>`).join('') +
+    `<tr class="foot"><td colspan="4">Nobody is told where the storm began. Bases infer its origin and speed from the times the front reached them; dots on the globe are the origins still consistent${inf?.speed ? `, speed ${inf.speed.lo.toFixed(0)}–${inf.speed.hi.toFixed(0)} m/s` : ''}. Range = 90% of consistent fits.</td></tr>`;
+  const log = sim.log(sol, inferStorm);
   $('ppLog').innerHTML = log.length ? log.map((e) => `<li class="${e.kind}"><b>Sol ${e.sol.toFixed(1)} · ${e.who}</b> ${e.text}</li>`).join('') : '<li class="none">Nothing on the shared log yet.</li>';
   const j = BASES.findIndex((b) => b.id === 'jezero'), jw = warn[j];
-  $('planetWatch').innerHTML = st[j] === 'watch' ? `${chip(LABEL.MODEL)} Shared log: dust from the ${sc.name.toLowerCase()} is expected at Jezero in about ${fmtSols(jw.sol - sol)}. Plan EVAs with a shelter in reach.`
+  const je = inf?.eta.jezero;
+  $('planetWatch').innerHTML = st[j] === 'watch' ? `${chip(LABEL.MODEL)} Shared log: ${je ? `bases estimate dust at Jezero between sol ${je.lo.toFixed(1)} and ${je.hi.toFixed(1)} (now sol ${sol.toFixed(1)})` : 'a storm is growing; origin and speed unknown until two bases report it'}. Plan EVAs with a shelter in reach.`
     : st[j] === 'storm' ? `${chip(LABEL.MODEL)} Shared log: Jezero is inside the ${sc.name.toLowerCase()}. Turn on the dust front below to rehearse it.` : '';
 }
 
@@ -472,7 +478,7 @@ function showSiteCard(k) {
 
 function showHabitatCard() {
   const idx = S.habitatIdx, z = S.t.z[idx], tS = S.tS;
-  const T = env.temperature(tS), P = env.pressure(tS, z), dr = env.doseRate(tS), tau = env.dustTau(tS);
+  const T = env.temperature(tS), P = env.pressure(tS, z), dr = env.doseRate(tS, z), tau = env.dustTau(tS);
   const targets = S.places ? S.places.places.filter((p) => p._xy.inside).map((p) => ({ name: p.name, idx: xyIdx(p._xy) }))
     : S.sites.sites.map((s, k) => ({ name: s.name, idx: S.siteIdx[k] }));
   const est = targets.map((q) => ({ ...q, ...reachEstimate(q.idx) })).sort((a, b) => a.km - b.km);
@@ -549,7 +555,7 @@ function recompute() {
 }
 
 function routeDose(r) {
-  return env.cumulativeDose(r.durationS).v;
+  return env.cumulativeDose(r.durationS, (t) => sampleAt(r, t).z).v;
 }
 
 function routeBlurb(k) {
@@ -623,7 +629,8 @@ const ROVER = { gustWaitS: 45 * 60, driveKmh: 10, walkKmh: 3.1, maxWaitS: 4 * 36
 /** How long to stay in the rover: dust → until the front plus its gusts have passed; SEP → until the dose rate is back under the warning level. */
 function shelterWait(kind, inAt, idx) {
   if (kind === 'dust' && front) return Math.min(ROVER.maxWaitS, Math.max(10 * 60, front.arrivalAt(idxXY(idx).x) + ROVER.gustWaitS - inAt));
-  for (let t = inAt; t < inAt + ROVER.maxWaitS; t += 300) if (env.doseRate(t).v < CONFIG.radWarnUGyPerDay.value) return Math.max(10 * 60, t - inAt);
+  const zs = S.t.z[idx], quiet = RAD.trigger * env.backgroundDose(inAt, zs).v; // all clear = back under the nowcast threshold
+  for (let t = inAt; t < inAt + ROVER.maxWaitS; t += 300) if (env.doseRate(t, zs).v < quiet) return Math.max(10 * 60, t - inAt);
   return ROVER.maxWaitS;
 }
 let front = null; // DustFront while the dust scenario is on
@@ -702,11 +709,42 @@ function updateFront(tS, crewX) {
   return K;
 }
 
+function sepHead() {
+  const a = sepAlert(), toPeak = a && a.peakS ? a.peakS - S.tS : null;
+  return `<h2 id="rpTitle">Solar particle event. ${toPeak !== null && toPeak > 60 ? `Peak in about ${fmtMin(toPeak)}.` : 'Get to shelter now.'}</h2>
+    <p class="rp-src">Confirmed by ${RAD.needed} of ${RAD.sensors} dose sensors: two 15-minute readings above ${Math.round((RAD.trigger - 1) * 100)}% over background.</p>`;
+}
+
 /** How much warning the second team's broadcast added, compared with the fixed stations alone. */
 function teamGainLine(first) {
   if (!first?.team) return '';
   const alone = new DustFront(front.hx, front.hy, front.tHab, $('scNet').value, 0).detections()[0];
   return ` <span class="rp-share">Team B's broadcast gave you ${fmtMin(alone.t - first.t)} more warning than the ${stationName(alone)}.</span>`;
+}
+
+// ---------- Monte Carlo: how likely is each option to beat the front? ----------
+// The crew knows when and where a station saw the front, not its exact speed. Sample the speed (and the crew's
+// own pace) many times and count how often the crew is inside before the front reaches their shelter.
+const MC = {
+  runs: 2000,
+  speedBroad: { mean: 25, sd: 8, min: 5, max: 40 },   // Assumption: centred on Jezero 2022, spread over the 5–40 m/s seen in 2018
+  speedMeasured: { sd: 2 },                            // after two stations: ±2 m/s, the uncertainty quoted for 2022
+  paceSd: 0.10,                                        // Assumption: walking time uncertain by ±10%
+};
+function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function gauss(r) { return Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r()); }
+/** P(crew inside before the front reaches shelter x), given the first detection and the speed knowledge so far. */
+function mcSafe(K, sx, fromNow) {
+  const d = K.det[0], seen = d.t - FRONT.confirmS, measured = K.speedLabel === 'measured';
+  const r = rng(12345); let ok = 0;
+  for (let i = 0; i < MC.runs; i++) {
+    let v;
+    do { v = measured ? K.speed + MC.speedMeasured.sd * gauss(r) : MC.speedBroad.mean + MC.speedBroad.sd * gauss(r); } while (v < MC.speedBroad.min || v > MC.speedBroad.max);
+    const frontAt = seen + (sx - d.x) / v;
+    const inAt = S.tS + fromNow * Math.max(0.5, 1 + MC.paceSd * gauss(r));
+    if (inAt <= frontAt) ok++;
+  }
+  return ok / MC.runs;
 }
 
 function replanOptions(kind) {
@@ -721,7 +759,9 @@ function replanOptions(kind) {
     const slack = frontAt !== null ? frontAt - safeAt : null;
     const doseUGy = integrate((x) => env.doseRate(x).v / 86400, tS, safeAt);
     const distNow = Math.max(0, route.distanceM - walkedDistance(r, tS));
-    opts.push({ key, name, why, route, fromNow, end, homeIn: end - tS, slack, stormS: slack !== null ? Math.max(0, -slack) : null, doseUGy, distNow, maxSlope: route.maxSlopeDeg, ...extra });
+    const K = dust && front ? front.knowledge(tS, p.x) : null;
+    const pSafe = K && K.det.length && sx !== null && key !== 'continue' ? mcSafe(K, sx, fromNow) : null;
+    opts.push({ key, name, why, route, fromNow, end, homeIn: end - tS, slack, pSafe, stormS: slack !== null ? Math.max(0, -slack) : null, doseUGy, distNow, maxSlope: route.maxSlopeDeg, ...extra });
   };
   const direct = astar(t, cur, S.habitatIdx, dust ? 'shortest' : 'shortest', CONFIG.maxSlopeDeg.value);
   if (direct && direct.length > 1) finish('direct', 'Head straight home', dust ? 'Fastest path to the habitat. New ground if visibility drops on the way.' : 'Fastest path to shelter in the habitat.',
@@ -745,7 +785,10 @@ function replanOptions(kind) {
   finish('continue', 'Continue the plan', 'Keep going to the destination and stops as planned.', { ...r, durationS: tS + est }, S.habitatIdx, { projected: true });
   const moves = opts.filter((o) => o.key !== 'continue');
   let rec;
-  if (dust) rec = moves.filter((o) => o.slack >= 0).sort((a, b) => a.fromNow - b.fromNow)[0] || moves.sort((a, b) => a.stormS - b.stormS)[0];
+  const shortest = moves.slice().sort((a, b) => a.fromNow - b.fromNow)[0];
+  if (shortest) shortest.shortest = true;
+  if (dust && moves.some((o) => o.pSafe !== null)) rec = moves.slice().sort((a, b) => (b.pSafe ?? -1) - (a.pSafe ?? -1) || a.fromNow - b.fromNow)[0];
+  else if (dust) rec = moves.filter((o) => o.slack >= 0).sort((a, b) => a.fromNow - b.fromNow)[0] || moves.sort((a, b) => a.stormS - b.stormS)[0];
   else rec = moves.sort((a, b) => a.fromNow - b.fromNow)[0];
   if (rec) rec.recommended = true;
   return opts;
@@ -764,30 +807,36 @@ function openReplan(kind) {
   const opts = replanOptions(kind), budget = CONFIG.evaLimitH.value * 3600, c = CASES[kind];
   const K = kind === 'dust' && front ? front.knowledge(S.tS, p.x) : null;
   const order = [...opts.keys()].sort((x, y) => (opts[y].recommended ? 1 : 0) - (opts[x].recommended ? 1 : 0) || (opts[x].key === 'continue') - (opts[y].key === 'continue'));
-  const optHTML = order.map((i) => {
+  // Only two routes on screen: the shortest way to shelter, and the Monte Carlo pick (one card if they agree).
+  const shown = order.filter((i) => opts[i].shortest || opts[i].recommended);
+  const card = (i) => {
     const o = opts[i], m = budget - o.end;
     const safe = o.key === 'continue' ? null : o.slack === null ? true : o.slack >= 0;
     const verdict = o.key === 'continue' ? `<p class="rp-v bad">You stay out in ${kind === 'dust' ? 'the storm' : 'the event'}</p>`
       : o.slack === null ? `<p class="rp-v ok">Sheltered in ${fmtHM(o.fromNow)}</p>`
+      : o.pSafe !== null ? `<p class="rp-v ${o.pSafe >= 0.9 ? 'ok' : o.pSafe >= 0.5 ? 'mid' : 'bad'}">${Math.round(o.pSafe * 100)}% chance to beat the front</p>`
       : safe ? `<p class="rp-v ok">Safe, ${fmtMin(o.slack)} to spare</p>` : `<p class="rp-v bad">Caught ${fmtMin(-o.slack)} before shelter</p>`;
     const plan = o.key === 'rover' ? `In the rover in ${fmtHM(o.fromNow)} · wait ${fmtHM(o.waitS)} · home ${fmtHM(o.homeIn)}`
       : o.key === 'continue' ? `Home in about ${fmtHM(o.homeIn)}` : `Home in ${fmtHM(o.fromNow)} · ${(o.distNow / 1000).toFixed(1)} km`;
+    const tags = [o.shortest ? '<span class="rp-tag">Shortest</span>' : '', o.recommended ? `<span class="rp-tag mc">${o.pSafe !== null ? 'Monte Carlo pick' : 'Recommended'}</span>` : ''].join('');
     return `<div class="rp-opt ${o.recommended ? 'rec' : ''} ${o.key === 'continue' ? 'weak' : ''}">
-      <b class="rp-name">${o.name}</b>${verdict}
-      <p class="rp-plan">${plan}</p>
+      ${tags ? `<div class="rp-tags">${tags}</div>` : ''}<b class="rp-name">${o.name}</b>${verdict}
+      <p class="rp-plan">${plan}${o.pSafe !== null && o.slack !== null ? ` · ${o.slack >= 0 ? fmtMin(o.slack) + ' to spare' : fmtMin(-o.slack) + ' short'} at 25 m/s` : ''}</p>
       <p class="rp-fine">max ${o.maxSlope.toFixed(0)}° · EVA margin <span class="${m < 0 ? 'bad' : ''}">${m < 0 ? '−' + fmtHM(-m) : fmtHM(m)}</span>${kind === 'sep' ? ` · +${o.doseUGy.toFixed(0)} µGy` : ''}</p>
       <button class="${o.recommended ? 'go' : 'ghost'}" data-i="${i}">${o.recommended ? 'Go: ' + o.name.toLowerCase() : o.key === 'continue' ? 'Keep the plan' : 'Choose'}</button>
     </div>`;
-  }).join('');
+  };
+  const both = shown.length === 1 && opts[shown[0]].shortest && opts[shown[0]].recommended;
+  const optHTML = shown.map(card).join('') + (both ? '<p class="rp-agree">The shortest route is also the Monte Carlo pick.</p>' : '');
   const first = K?.det[0];
   const eta = K && K.passed ? 'It is over you now.' : `Reaches you in ${K ? fmtMin(K.etaS) : '?'}.`;
   const head = kind === 'dust'
     ? `<h2 id="rpTitle">Dust front. ${eta}</h2>
        <p class="rp-src">${first?.team ? `Reported by ${stationName(first)}.` : `Detected at ${first ? stationName(first) : 'a station'}.`}${teamGainLine(first)}</p>`
-    : `<h2 id="rpTitle">Solar particle event. Get to shelter.</h2>`;
+    : sepHead();
   const more = kind === 'dust'
-    ? `<p>Network: ${front.network.name} <i class="pv a">proposed</i>. Front moving east at ${K ? K.speed.toFixed(0) : FRONT.speedMs} m/s <i class="pv ${K && K.speedLabel === 'measured' ? 'o' : 'a'}">${K ? K.speedLabel : 'assumed'}</i>, the speed measured for the January 2022 storm at Jezero. Pace drops to ${Math.round(PACE.dustTracks * 100)}% on your own tracks once dust arrives <i class="pv a">assumed</i>. In the rover the crew waits ${Math.round(ROVER.gustWaitS / 60)} min after the front for the gusts to pass, then drives home at ${ROVER.driveKmh} km/h <i class="pv a">assumed</i>.</p>`
-    : `<p>Dose rate follows the May 2024 RAD event profile <i class="pv s">scenario</i>. The crew stays in the rover until the dose rate is back under ${CONFIG.radWarnUGyPerDay.value} µGy/day, then drives home. Terrain shielding is not modelled.</p>`;
+    ? `<p>Network: ${front.network.name} <i class="pv a">proposed</i>. Front moving east at ${K ? K.speed.toFixed(0) : FRONT.speedMs} m/s <i class="pv ${K && K.speedLabel === 'measured' ? 'o' : 'a'}">${K ? K.speedLabel : 'assumed'}</i>, the speed measured for the January 2022 storm at Jezero. Odds come from ${MC.runs.toLocaleString('en-US')} Monte Carlo runs: front speed ${MC.speedBroad.mean} ± ${MC.speedBroad.sd} m/s, kept within ${MC.speedBroad.min}–${MC.speedBroad.max} m/s, until two stations measure it, then ± ${MC.speedMeasured.sd} m/s; walking time ± ${Math.round(MC.paceSd * 100)}% <i class="pv a">assumed</i>. The recommended option has the best odds; the shortest is the quickest to shelter. Pace drops to ${Math.round(PACE.dustTracks * 100)}% on your own tracks once dust arrives <i class="pv a">assumed</i>. In the rover the crew waits ${Math.round(ROVER.gustWaitS / 60)} min after the front for the gusts to pass, then drives home at ${ROVER.driveKmh} km/h <i class="pv a">assumed</i>.</p>`
+    : `<p>Dose rate follows the May 2024 RAD event profile <i class="pv s">scenario</i>. ${RAD.sensors} dose sensors within 100 km of the habitat <i class="pv a">assumed</i> run the RAD nowcast of Löwe et al. 2025: a 15-minute reading above ${Math.round((RAD.trigger - 1) * 100)}% over background triggers, the next one confirms, and the alert goes out when ${RAD.needed} sensors agree <i class="pv a">assumed</i>. The particles reach every sensor at once, so the network confirms the event rather than buying warning time. That study found a crew should stay within ${RAD.maxAwayS / 60} minutes of shelter. The crew stays in the rover until the dose rate is back under the trigger level, then drives home. Background dose is adjusted to local air pressure (Guo et al. 2015); terrain shielding is not modelled.</p>`;
   const el = $('replan');
   el.innerHTML = `<div class="rp-card" role="alertdialog" aria-modal="true" aria-labelledby="rpTitle">
     <div class="rp-head">${head}</div>
@@ -834,7 +883,7 @@ function update(dtReal) {
   const behind = sampleAt(r, Math.min(r.durationS, S.tS + 12)); // partner ~10 m ahead (visible in first person)
   const z = p.z;
   const T = env.temperature(S.tS), P = env.pressure(S.tS, z), Wd = env.wind(S.tS), tau = env.dustTau(S.tS);
-  const beam = env.beamTransmission(S.tS), dr = env.doseRate(S.tS), cum = env.cumulativeDose(S.tS);
+  const beam = env.beamTransmission(S.tS), dr = env.doseRate(S.tS, z), cum = env.cumulativeDose(S.tS, (t) => sampleAt(r, t).z);
   const state = classifyState({ grade: p.grade, phase: p.phase, tau: tau.v, doseRate: dr.v, radWarn: CONFIG.radWarnUGyPerDay.value });
   lastState = state;
   const walking = p.phase !== 'stop' && S.tS < r.durationS;
@@ -919,6 +968,7 @@ function update(dtReal) {
     ${tile('Direct sunlight', (beam.v * 100).toFixed(0), ' %', beam)}
     ${tile('Dose rate', Math.round(dr.v), ' µGy/day', dr, '', dr.v > CONFIG.radWarnUGyPerDay.value ? 'alert' : '')}
     ${tile('Dose this EVA', cum.v.toFixed(1), ' µGy', cum)}
+    ${tile('Maya’s dose limit left', limitLeftMSv(cum.v).toFixed(2), ' mSv', { label: `${LABEL.MODEL} + ${LABEL.ASSUMP}`, src: 'Career limit minus dose before this EVA minus this EVA, absorbed dose × 3.05 (RAD surface ratio, Hassler et al. 2014)', short: `NASA career limit ${RAD.careerLimitMSv} mSv, ${RAD.priorMSv} mSv assumed before this EVA` })}
     ${tile('Ground', `${z.toFixed(0)}`, ` m, ${p.slope.toFixed(0)}° slope`, terr, ll || `${(p.x / 1000).toFixed(2)} km E, ${(p.y / 1000).toFixed(2)} km S`, 'wide')}
   </div>`;
 
@@ -966,6 +1016,7 @@ function updateVisor(r, p, e) {
     { k: 'Dust τ', v: e.tau.v.toFixed(2), u: '', pv: pv(e.tau.label), warn: e.tau.v > 1.5 },
   ];
   const right = [
+    { k: 'Dose limit left', v: limitLeftMSv(e.cum.v).toFixed(2), u: ' mSv', pv: pv(LABEL.ASSUMP), warn: limitLeftMSv(e.cum.v) < 20 },
     { k: 'Air', v: e.T.v.toFixed(0), u: ' °C', pv: pv(e.T.label) },
     { k: 'Pressure', v: e.P.v.toFixed(0), u: ' Pa', pv: pv(e.P.label) },
     { k: 'Wind', v: e.Wd.v.toFixed(1), u: ' m/s', pv: pv(e.Wd.label) },
@@ -1095,6 +1146,23 @@ function wire() {
 }
 
 let prev = performance.now();
+/**
+ * Solar particle event alert: four dose sensors within 100 km of the habitat (Assumption) run the RAD nowcast
+ * (Löwe et al. 2025). Particles arrive everywhere at once, so the sensors confirm the event; they do not buy lead time.
+ * Sensors are off the map, so each reads at the habitat's elevation.
+ */
+function sepAlert() {
+  const sc = env.scenarios.sep; if (!sc.on) return null;
+  const zh = S.t.z[S.habitatIdx], bg = env.backgroundDose(sc.startS, zh).v;
+  const sensors = ['N', 'E', 'S', 'W'].map((d) => ({ id: `R-${d}`, background: bg, doseAt: (t) => env.doseRate(t, zh).v }));
+  const a = networkAlert(sensors, Math.max(0, sc.startS - 3600), sc.startS + 8 * 3600);
+  if (!a) return null;
+  // time of the event's peak, from the replayed RAD profile
+  const P = env.rad.sep; let peakS = null;
+  if (P) { let k = 0; P.uGyPerDay.forEach((v, i) => { if (v > P.uGyPerDay[k]) k = i; }); peakS = sc.startS + P.tH[k] * 3600; }
+  return { ...a, bg, peakS };
+}
+
 function loop(now) {
   const dt = Math.min(0.1, (now - prev) / 1000); prev = now;
   const r = S.routes[S.sel];
@@ -1103,7 +1171,7 @@ function loop(now) {
     S.tS = Math.min(playEnd(r), S.tS + dt * +$('speed').value);
     for (const kind of ['dust', 'sep']) {
       const sc = env.scenarios[kind];
-      const at = Math.max(1, kind === 'dust' ? (front ? front.detections()[0].t : Infinity) : sc.startS);
+      const at = Math.max(1, kind === 'dust' ? (front ? front.detections()[0].t : Infinity) : (sepAlert()?.t ?? Infinity));
       if (sc.on && !S.handled[kind] && before < at && S.tS >= at && S.sel !== 'replan') { if (at >= r.durationS) { S.handled[kind] = true; continue; } S.tS = at; openReplan(kind); break; }
     }
     if (S.tS >= playEnd(r)) { S.playing = false; $('play').textContent = '▶'; }

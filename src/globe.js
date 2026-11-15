@@ -197,6 +197,18 @@ export class GlobeView {
     this.stormU.nlim.value = Math.sin((northLimit * Math.PI) / 180);
     this.stormU.k.value = strength;
   }
+  /** Possible storm origins the bases have inferred (small dots on the surface). */
+  setCandidates(list) {
+    if (!this.cand) {
+      this.cand = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ color: 0x9fd3ff, size: 0.018, transparent: true, opacity: 0.9, depthWrite: false }));
+      this.cand.renderOrder = 4; this.scene.add(this.cand);
+    }
+    const pos = new Float32Array((list?.length || 0) * 3);
+    (list || []).forEach((c, i) => { const v = latLonToVec3(c.lat, c.lon, 1.02); pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z; });
+    this.cand.geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    this.cand.geometry.computeBoundingSphere();
+    this.cand.visible = !!(list && list.length);
+  }
   setBaseStatus(id, status) {
     const pin = this.basePins[id]; if (!pin || pin.userData.status === status) return;
     pin.userData.status = status;

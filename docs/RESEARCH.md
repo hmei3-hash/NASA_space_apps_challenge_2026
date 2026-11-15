@@ -7,7 +7,7 @@ Why Marswalk re-plans mid-EVA, and where its numbers come from. Statements are p
 ### Jezero, January 2022: a storm front crossing Perseverance
 - A regional dust storm passed over the Perseverance site on 5–11 January 2022 (Ls 153°–156°); pressure, temperature and winds all responded. — Lemmon et al. 2022, *GRL*, https://agupubs.onlinelibrary.wiley.com/doi/10.1029/2022GL100126
 - The storm reactivated west of Jezero on 8 January 2022 (sol 315). Measurements of the rapid expansion of the dust front give **25 ± 2 m/s**. — Sánchez-Lavega et al. 2025, *JGR Planets*, https://agupubs.onlinelibrary.wiley.com/doi/10.1029/2024JE008565 **(used in app: front speed, front comes from the west)**
-- In MEDA pressure, the storm raised the daily pressure range to about 60 Pa (sol 313); the diurnal and semidiurnal tide amplitudes grew by a factor of 2–3. — Sánchez-Lavega et al. 2023, *JGR Planets*, https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2022JE007480
+- In MEDA pressure (section 8, Figure 15), the daily pressure minimum dropped by up to ~60 Pa on sol 313 (~17 h local time) relative to sol 311, and the diurnal (S1) and semidiurnal (S2) tide amplitudes grew by factors of ~2.7 and 4; the conclusions summarise this as 2–3×. — Sánchez-Lavega et al. 2023, *JGR Planets* 128, e2022JE007480, https://arxiv.org/abs/2401.12931
 - MEDA sampled at 1 Hz for at least 5 minutes each hour, running continuously only in alternating hours. — Lemmon et al. 2022. A warning network would need continuous sampling.
 
 ### Opportunity, June 2018: a storm that grew faster than expected
@@ -108,6 +108,10 @@ The footprint is a disc on the sphere, centre c(t), radius r(t) = min(r_max, v·
 
 The fitted 6.2 m/s sits inside the measured 5–40 m/s range for 2018: a disc that grows at one average speed matches the dated arrivals, even though the real edge advanced in fast and slow lobes. The 2022 origin point is our reading of a weekly weather map, not a published coordinate. The third scenario, a "typical northern flushing storm" from Utopia past Isidis, is statistical: its track is our sketch of the published route map, its size cap is the 10⁷ km² major threshold, and its speeds are picked inside the measured range.
 
+![Figure 1](figures/storm_model.png)
+
+**Figure 1.** (a) Distance from the storm's origin against time. Lines are the model's footprint edge, r = v·t; bars are observed arrival windows from NASA/JPL reports and Sánchez-Lavega et al. 2019 (2018) and Lemmon et al. 2022 (2022). One fitted speed per storm, 6.2 m/s for 2018 and 9.5 m/s for 2022, passes through every window; the dashed lines bound the 5–40 m/s front speeds measured in 2018. The 2022 footprint stops growing at the 3,600 km regional cap. (b) Warning a crew gets from the first upwind station, distance / speed − 90 s confirmation. At the 25 m/s Jezero front, a 30 km ring gives 18.5 min and a ring at the edge of NASA's 100 km Exploration Zone gives 65 min. Regenerate with `python scripts/plot_storm_model.py`.
+
 ### Sharing between bases (what the globe shows)
 Bases are placed at four real landing sites (Jezero, Gale, Meridiani, Elysium) so each has a surface record. Crewed outposts there are an **assumption**. Each base learns of a storm from the earliest of: the daily orbital map (MRO MARCI makes one per sol today), a broadcast from a base the storm has already reached, or its own stations. Examples from the model:
 - 2018 storm: Meridiani is hit on sol 3.8. Its broadcast gives Jezero 5.3 sols and Gale 11.7 sols of warning, more than either base's own stations (about an hour with a 100 km ring).
@@ -117,3 +121,51 @@ Bases are placed at four real landing sites (Jezero, Gale, Meridiani, Elysium) s
 - It is a replay and sandbox, not a forecast. Storm onset and growth are not predictable today.
 - Real storms are lobed, split and merge (MDAD tracks "members" that do exactly this); a disc is the simplest shape that reproduces arrival times.
 - The Mars Dust Activity Database itself was not downloaded; its published statistics and thresholds are used.
+
+## 5. Radiation model: background dose from air pressure, and a solar-event nowcast
+
+### What the papers say
+**Dose vs pressure.** Guo et al. 2015, *ApJ*, "Modeling the variations of dose rate measured by RAD during the first MSL Martian year", https://arxiv.org/abs/1507.03473
+- Fit (section 4, eq. 3): D(Φ, P) = D₀ + κP + βΦ, with Φ the solar modulation.
+- Section 4.1.2: κ = −0.13 ± 0.02 µGy/day per Pa for RAD detector E, correlation 98.8%; consistent with Rafkin et al. 2014 (about 0.116 µGy/day/Pa).
+- Section 4.1: the diurnal swing is about 15 µGy/day (~5%) out of around 220 µGy/day. Section 4.2.1: mean REMS pressure 840 Pa over the fit period.
+- Section 4.1.2: "The measured dose rate decreases when the pressure increases since κ is negative."
+- Why: the shielding comes from the atmospheric mass column, which is close to proportional to surface pressure, so dose should also change with elevation. — Rafkin et al., EGU 2013, https://meetingorganizer.copernicus.org/EGU2013/EGU2013-6068-5.pdf
+
+**Solar particle event nowcast.** Löwe et al. 2025, *Space Weather* 23, e2025SW004372, https://arxiv.org/abs/2502.02469
+- Trigger (section 3): a reading more than 25% above background, background fitted to the previous five days of 15-minute RAD dose rates. Confirmation (section 5): the next reading is also above the threshold.
+- Section 4: 16 SEP events on the surface; average time to peak 3 h 37 min and lead time (time to avoid 90% of the event dose) 1 h 38 min as stated by the authors; "an astronaut should not move more than 30 minutes away from a shelter".
+- False alarms: 25% for a single surface reading, zero with the cross-check (section 4.1).
+
+### The model in the app (src/radmodel.js, used in app)
+- **Background dose at any elevation:** D = D_Gale + κ (P_local − 840 Pa), κ = −0.13 µGy/day/Pa. P_local is MEDA pressure at the habitat, shifted by the 11.1 km scale height. Applying a fit made on daily pressure swings at Gale to differences in elevation is our **extrapolation (assumption)**. Not applied to solar events, whose surface dose depends on the event's energy spectrum.
+- **Route dose:** that dose rate integrated along the route's elevation profile.
+- **Alert:** four dose sensors within 100 km of the habitat (**assumption**) each run the Löwe et al. trigger; the alert goes out when two confirm (**assumption**). The crew shelters until the dose rate is back under the trigger level.
+
+![Figure 2](figures/rad_model.png)
+
+**Figure 2.** (a) The Guo et al. 2015 fit through Curiosity's quiet dose at Gale. Jezero's lower MEDA pressure (607–641 Pa) puts its quiet dose about 9% above Gale's; 2 km higher ground would add about 5% more. Within one EVA area (~100 m of relief) the difference is under 1 µGy/day. (b) The nowcast on the May 2024 event replayed in the app, with readings every 15 minutes: confirmed 15–30 minutes after onset, depending on where onset falls between readings; peak at 36 minutes. Regenerate with `python scripts/plot_rad_model.py`; `scripts/test_rad.mjs` checks the numbers.
+
+### What we learned, and do not claim
+- **Sensors don't buy time for radiation.** Particles arrive at every sensor at once; a 100 km network confirms the event and rules out a faulty sensor. Warning time comes from the rise to the peak, and from forecasts that watch the Sun.
+- **Some events are fast.** May 2024 peaked only 6–21 minutes after the nowcast confirmed. So the 30-minute-from-shelter rule matters more than the alert.
+- **Elevation matters across a region, not within one walk.** Planning dose by elevation is useful for choosing a site, not a route.
+- Terrain shielding (cliffs, crater walls) is not modelled.
+
+## 6. Decisions under uncertainty
+
+### Monte Carlo odds for each shelter option (src/main.js, `mcSafe`)
+The crew knows when and where a station saw the front, not its exact speed. For each option the app runs 2,000 samples: front speed 25 ± 8 m/s kept within 5–40 m/s (centred on the 2022 Jezero front, spread over the range measured in 2018; **assumption**), narrowed to ± 2 m/s once two stations have measured it (the 2022 uncertainty), and walking time ± 10% (**assumption**). An option counts as safe in a sample if the crew is inside before the front reaches the shelter. The dialog tags the **shortest** option (quickest to shelter) and the one with the **best odds**, and still shows the margin at exactly 25 m/s.
+
+### Bases infer the storm instead of being told (src/stormsim.js, `inferStorm`)
+No base knows where the storm started. Each only knows when the front reached it. For every candidate origin on a 3° grid, the app fits arrival time = start + distance / speed to the reported arrivals by least squares, keeps origins whose fit is within 0.35 sol, whose speed is 1–40 m/s, and that would not already have covered a base still clear. The consistent origins (dots on the globe) give each base an arrival range (5th–95th percentile). With one report nothing can be inferred.
+- 2018 replay: after Meridiani and Jezero report, Gale's range is sol 9.7–24.9; after Elysium also reports, sol 14.7–16.4. The model's arrival is sol 15.5 (`npm test` checks it).
+- 2022 replay: the method cannot know a storm will stop growing, so it still predicts Meridiani, which the storm never reached. Inference assumes steady growth.
+
+### Storm effect on pressure and dose (src/environment.js)
+During the January 2022 storm, the diurnal and semidiurnal tides over Jezero grew ~2.7× and 4×, summarised by the authors as 2–3×, and the daily pressure minimum dropped by up to ~60 Pa (Sánchez-Lavega et al. 2023, section 8, Figure 15). Once the front passes the crew, the app scales MEDA's whole daily pressure swing about its mean by 2.5 (**assumption**: one factor for all tides, inside the authors' 2–3×; it does not reproduce the 60 Pa drop of the minimum). Dose follows through κ (section 5): the dose rate swings more over the day, while its daily mean barely changes. The dust's own shielding is not modelled. Curiosity met the 2018 storm at opacity 8.5 with visibility down to 2.7 km (Guzewich et al. 2019, GRL, https://doi.org/10.1029/2018GL080839).
+
+### Maya's dose limit left (src/radmodel.js, `limitLeftMSv`)
+- On the surface RAD measured 0.21 mGy/day absorbed and 0.64 mSv/day dose equivalent (Hassler et al. 2014, Science), so 1 µGy ≈ 3.05 µSv. The app applies this ratio to solar particles too (**assumption**).
+- Limit: NASA's 600 mSv career limit (cited in Löwe et al. 2025). Dose before this EVA: 350 mSv (**assumption**: about 180 days of cruise at 1.8 mSv/day, the RAD cruise rate (Zeitlin et al. 2013), plus weeks on the surface).
+- Shown as "Dose limit left" in the visor and in Live conditions.
