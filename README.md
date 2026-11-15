@@ -1,0 +1,50 @@
+# Marswalk — Jezero EVA route planner (MVP)
+
+Interactive 3D map for planning one surface EVA at Jezero crater's delta front: pick a destination, compare three routes (Shortest / Gentlest / Science), then drag the mission timeline to watch two astronauts walk the route while the environment panel replays temperature, pressure, wind, dust and radiation for that place and time. Every number carries a provenance label (Observation / Historical Replay / Model Estimate / Assumption / Scenario Event). Glossary: [docs/CONTEXT.md](docs/CONTEXT.md).
+
+> This branch (`marswalk-mvp`) is an orphan branch: it shares no history with `main` (the wearable-health project).
+
+## Run
+
+```powershell
+npm install
+npm run dev          # http://localhost:5173
+npm test             # routing sanity tests on the synthetic terrain
+```
+
+With no data downloaded the app runs on a **clearly labeled synthetic terrain**. Real data replaces it automatically once `public/data/terrain.json` exists.
+
+## Get real data (PowerShell)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\download_data.ps1          # terrain DEM + MEDA sol + raw images
+conda create -n marswalk -c conda-forge python=3.11 gdal numpy -y
+conda activate marswalk
+python scripts\preprocess_terrain.py --dem data_raw\M20_JezeroCrater_CTXDEM_20m.tif --ortho https://planetarymaps.usgs.gov/mosaic/mars2020_trn/CTX/JEZ_ctx_B_soc_008_orthoMosaic_6m_Eqc_latTs0_lon0.tif
+python scripts\preprocess_meda.py data_raw\meda\sol_0300 --sol 300
+```
+
+| Layer | Source | Label in app |
+|---|---|---|
+| Elevation / slope | Mars 2020 CTX DEM mosaic, 20 m (USGS Astrogeology / JPL) | Observation |
+| Optical | Mars 2020 TRN CTX orthomosaic, 6 m (HiRISE 25 cm also works via `--ortho`, much larger) | Observation |
+| Temperature / pressure / wind | MEDA derived data, one sol (PDS Atmospheres) | Historical Replay (at the rover) |
+| Pressure at other elevations | MEDA × exp(−Δz/H) | Model Estimate |
+| Dust | column optical depth τ, baseline + storm scenario | Assumption / Scenario Event |
+| Dose rate | Curiosity RAD dose_E, quiet 2019 median (Gale) | Observation, not Jezero |
+| SEP | RAD-observed May 2024 SEP profile replayed at a chosen time | Scenario Event |
+| Arrival preview | Perseverance raw images API | Observation (representative) |
+
+`public/data/rad.json` is already built from the main branch's CDAWeb RAD windows (`scripts/preprocess_rad.py`).
+
+## How it works
+
+- `src/terrain.js` — loads the preprocessed DEM grid (or makes the synthetic one) and computes slope.
+- `src/routing.js` — A* (8-connected) with a hard slope limit; Tobler hiking speed × suit factor; three route profiles; timed samples for the timeline.
+- `src/environment.js` — time/position-dependent environment with provenance labels; dose integration.
+- `src/astronaut.js` — data-driven gait (uphill / downhill / sampling), dust particles from τ, radiation ring + HUD warning. No wind “lean”: Martian dynamic pressure is ~1 Pa.
+- `src/main.js` — three.js scene, comparison table, timeline, click-to-set destination.
+
+## Limitations (deliberate)
+
+MEDA is a single-point historical record, not weather for the whole map and not a forecast. RAD is measured at Gale, not Jezero, and route-to-route dose differences come only from EVA duration. No terrain shielding model. Science-site positions in `public/data/sites.json` are placeholders until you place them on real targets. Walking speed, slope limit, stop durations and the radiation warning threshold are Assumptions (illustrative, not NASA flight rules).
