@@ -1,9 +1,9 @@
-# Builds Marswalk and publishes it to GitHub Pages on every push to marswalk-mvp.
+# Builds Marswalk and publishes it to GitHub Pages on every push to main (or marswalk-mvp).
 name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [marswalk-mvp]
+    branches: [main, marswalk-mvp]
   workflow_dispatch:
 
 permissions:

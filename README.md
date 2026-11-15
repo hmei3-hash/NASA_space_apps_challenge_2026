@@ -2,7 +2,7 @@
 
 Interactive 3D map for planning one surface EVA at Jezero crater's delta front: pick a destination, compare three routes (Shortest / Gentlest / Science), then drag the mission timeline to watch two astronauts walk the route while the environment panel replays temperature, pressure, wind, dust and radiation for that place and time. Every number carries a provenance label (Observation / Historical Replay / Model Estimate / Assumption / Scenario Event). Glossary: [docs/CONTEXT.md](docs/CONTEXT.md).
 
-> This branch (`marswalk-mvp`) is an orphan branch: it shares no history with `main` (the wearable-health project).
+> Live site: https://hmei3-hash.github.io/NASA_space_apps_challenge_2026/ (add `?demo` for the 30-second demo).
 
 ## Impact
 
