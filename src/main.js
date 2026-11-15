@@ -5,6 +5,8 @@ import { loadTerrain, uvToCell } from './terrain.js';
 import { generateRoutes, sampleAt, snapTraversable, overlap } from './routing.js';
 import { Environment, MARS_HOUR_S } from './environment.js';
 import { makeAstronaut, animate, classifyState, GAIT_TEXT, makeDust, updateDust, SCALE } from './astronaut.js';
+import { RESOURCE_TYPES, badgeSprite, badgeImgHTML } from './resources.js';
+import { ICON_ATTRIBUTION } from './icons.js';
 
 const $ = (id) => document.getElementById(id);
 const CHIP = { [LABEL.OBS]: 'o', [LABEL.REPLAY]: 'r', [LABEL.MODEL]: 'm', [LABEL.ASSUMP]: 'a', [LABEL.SCENARIO]: 's' };
@@ -15,6 +17,7 @@ const MARS_R = 3396190;
 const S = {
   t: null, sites: null, habitatIdx: 0, destIdx: 0, siteIdx: [], routes: {}, sel: 'gentlest',
   tS: 0, playing: false, exag: CONFIG.verticalExaggeration, zmin: 0, images: [],
+  places: null, fp: false, fpYaw: 0, fpYawOff: 0, fpPitch: -0.08, hiddenKinds: new Set(),
 };
 const env = new Environment();
 
@@ -26,7 +29,7 @@ viewport.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xc79a7b);
 scene.fog = new THREE.Fog(0xc79a7b, 4000, 14000);
-const camera = new THREE.PerspectiveCamera(50, 1, 5, 40000);
+const camera = new THREE.PerspectiveCamera(50, 1, 5, 120000);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI * 0.48;
@@ -35,8 +38,9 @@ const sun = new THREE.DirectionalLight(0xfff1e0, 2.0);
 sun.position.set(-3000, 4000, -1500);
 scene.add(sun);
 
-let terrainMesh, routeGroup = new THREE.Group(), markerGroup = new THREE.Group();
-scene.add(routeGroup, markerGroup);
+let terrainMesh, routeGroup = new THREE.Group(), markerGroup = new THREE.Group(), resGroup = new THREE.Group(), travGroup = new THREE.Group();
+scene.add(routeGroup, markerGroup, resGroup, travGroup);
+const SKY = new THREE.Color(0xc79a7b), DUSTSKY = new THREE.Color(0x9a6a48);
 const crew = [makeAstronaut(0xf5f5f5), makeAstronaut(0xe3ecff)];
 crew.forEach((c) => scene.add(c));
 const dust = makeDust();
@@ -108,13 +112,84 @@ function buildMarkers() {
     m.position.copy(p).add(new THREE.Vector3(0, h / 2, 0)); markerGroup.add(m);
     const l = labelSprite(text, '#' + color.toString(16).padStart(6, '0')); l.position.copy(p).add(new THREE.Vector3(0, h + 70, 0)); markerGroup.add(l);
   };
-  pin(S.habitatIdx, 0xffffff, '⌂ ' + S.sites.habitat.name, 160);
+  const hb = badgeSprite('habitat', 0.055); hb.position.copy(idxWorld(S.habitatIdx)).add(new THREE.Vector3(0, 60, 0)); markerGroup.add(hb);
+  const hl = labelSprite('⌂ ' + S.sites.habitat.name); hl.position.copy(idxWorld(S.habitatIdx)).add(new THREE.Vector3(0, 60, 0)); hl.center.set(0.5, -0.9); markerGroup.add(hl);
   const dome = new THREE.Mesh(new THREE.SphereGeometry(40, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xeeeeee }));
   dome.position.copy(idxWorld(S.habitatIdx)); markerGroup.add(dome);
-  S.sites.sites.forEach((s, k) => pin(S.siteIdx[k], 0xffb74d, `${s.id} ${s.name}`));
+  if (!S.places) S.sites.sites.forEach((s, k) => {
+    const b = badgeSprite(s.resource || 'sediment'); b.position.copy(idxWorld(S.siteIdx[k])).add(new THREE.Vector3(0, 50, 0));
+    b.userData.site = k; markerGroup.add(b);
+  });
   const ring = new THREE.Mesh(new THREE.RingGeometry(40, 55, 32), new THREE.MeshBasicMaterial({ color: 0x00e5ff, side: THREE.DoubleSide }));
   ring.rotation.x = -Math.PI / 2; ring.position.copy(idxWorld(S.destIdx, 2)); markerGroup.add(ring);
   pin(S.destIdx, 0x00e5ff, '◎ Destination', 90);
+}
+
+function latLonToXY(lat, lon) {
+  const c = S.t.source.center;
+  const x = ((lon - c.lon) * Math.PI / 180) * MARS_R * Math.cos((c.lat * Math.PI) / 180) + W() / 2;
+  const y = H() / 2 - ((lat - c.lat) * Math.PI / 180) * MARS_R; // grid y grows southward
+  return { x, y, inside: x >= 0 && y >= 0 && x <= W() && y <= H() };
+}
+function zAtXY(x, y) {
+  const c = Math.min(S.t.w - 1, Math.max(0, Math.round(x / S.t.cell))), r = Math.min(S.t.h - 1, Math.max(0, Math.round(y / S.t.cell)));
+  return S.t.z[r * S.t.w + c];
+}
+
+function buildPlaces() {
+  resGroup.clear(); travGroup.clear();
+  if (!S.places) return;
+  const pts = [];
+  for (const [lat, lon] of S.places.traverse) {
+    const q = latLonToXY(lat, lon); if (!q.inside) { if (pts.length > 1) addTrav(pts.splice(0)); else pts.length = 0; continue; }
+    pts.push(toWorld(q.x, q.y, zAtXY(q.x, q.y) + 3 / S.exag));
+  }
+  if (pts.length > 1) addTrav(pts);
+  function addTrav(arr) {
+    const g = new THREE.BufferGeometry().setFromPoints(arr);
+    travGroup.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthTest: true })));
+  }
+  S.places.places.forEach((p, k) => {
+    if (!p._xy.inside || S.hiddenKinds.has(p.resource)) return;
+    const b = badgeSprite(p.resource, p.science ? 0.05 : 0.04);
+    b.position.copy(toWorld(p._xy.x, p._xy.y, zAtXY(p._xy.x, p._xy.y))).add(new THREE.Vector3(0, 50, 0));
+    b.userData.place = k;
+    resGroup.add(b);
+  });
+  travGroup.visible = $('showTrav').checked;
+}
+
+function showPlaceCard(k) {
+  const p = S.places.places[k], t = RESOURCE_TYPES[p.resource];
+  const el = $('preview'); previewKey = 'place:' + k;
+  el.innerHTML = `<div class="pc-head">${badgeImgHTML(p.resource, 34)}<div><b>${p.name}</b><br><span class="cap">${t.zh} · ${t.en}</span></div><button class="x" id="pcClose">✕</button></div>
+    <div class="cap">${p.desc}</div>
+    <div class="cap">${chip(LABEL.OBS)} position = Perseverance end-of-sol waypoint, sol ${p.waypointSol} (sample sol ${p.sol}). Basis: ${p.basis}</div>
+    <button id="pcGo" class="go">设为目的地 / Go here</button>`;
+  el.classList.remove('hidden');
+  $('pcClose').onclick = () => { el.classList.add('hidden'); previewKey = null; };
+  $('pcGo').onclick = () => { S.destIdx = snapTraversable(S.t, xyIdx(p._xy), CONFIG.maxSlopeDeg.value); recompute(); };
+}
+const xyIdx = (q) => Math.min(S.t.h - 1, Math.max(0, Math.round(q.y / S.t.cell))) * S.t.w + Math.min(S.t.w - 1, Math.max(0, Math.round(q.x / S.t.cell)));
+
+function renderResourceList() {
+  if (!S.places) { $('resList').innerHTML = '<p class="note">Run <code>scripts\\build_places.py</code> to load real Jezero place names.</p>'; return; }
+  const inside = S.places.places.map((p, k) => ({ p, k })).filter(({ p }) => p._xy.inside);
+  const kinds = [...new Set(inside.map(({ p }) => p.resource))];
+  $('resList').innerHTML = `<div class="kinds">${kinds.map((kd) => `<label class="kind"><input type="checkbox" data-kind="${kd}" ${S.hiddenKinds.has(kd) ? '' : 'checked'}>${badgeImgHTML(kd, 18)} ${RESOURCE_TYPES[kd].zh}</label>`).join('')}</div>` +
+    inside.map(({ p, k }) => `<div class="site">${badgeImgHTML(p.resource, 20)}<span class="pn" data-k="${k}">${p.name}</span><small>sol ${p.sol}</small></div>`).join('') +
+    `<p class="note">${inside.length}/${S.places.places.length} places inside this map. ${ICON_ATTRIBUTION}</p>`;
+  $('resList').querySelectorAll('input[data-kind]').forEach((cb) => cb.onchange = () => {
+    cb.checked ? S.hiddenKinds.delete(cb.dataset.kind) : S.hiddenKinds.add(cb.dataset.kind); buildPlaces();
+  });
+  $('resList').querySelectorAll('.pn').forEach((el) => el.onclick = () => { showPlaceCard(+el.dataset.k); flyTo(S.places.places[+el.dataset.k]._xy); });
+}
+function flyTo(q) {
+  if (S.fp) return;
+  $('follow').checked = false;
+  const tgt = toWorld(q.x, q.y, zAtXY(q.x, q.y));
+  const off = camera.position.clone().sub(controls.target).setLength(900);
+  controls.target.copy(tgt); camera.position.copy(tgt).add(off);
 }
 
 function buildRouteMeshes() {
@@ -207,7 +282,7 @@ function update(dtReal) {
   const r = S.routes[S.sel];
   if (!r) return;
   const p = sampleAt(r, S.tS);
-  const behind = sampleAt(r, Math.max(0, S.tS - 25)); // second crew member ~25 s behind
+  const behind = sampleAt(r, Math.min(r.durationS, S.tS + 12)); // partner ~10 m ahead (visible in first person)
   const z = p.z;
   const T = env.temperature(S.tS), P = env.pressure(S.tS, z), Wd = env.wind(S.tS), tau = env.dustTau(S.tS);
   const beam = env.beamTransmission(S.tS), dr = env.doseRate(S.tS), cum = env.cumulativeDose(S.tS);
@@ -216,13 +291,33 @@ function update(dtReal) {
   const walking = p.phase !== 'stop' && S.tS < r.durationS;
 
   [[crew[0], p], [crew[1], behind]].forEach(([fig, q], k) => {
-    const w = toWorld(q.x + (k ? 6 : 0), q.y, q.z);
+    const w = toWorld(q.x + (k && !S.fp ? 6 : 0), q.y, q.z);
     fig.position.copy(w);
     if (q.heading !== undefined && q.phase !== 'stop') fig.rotation.y = -q.heading + Math.PI / 2;
     animate(fig, k ? classifyState({ grade: q.grade, phase: q.phase, tau: tau.v, doseRate: dr.v, radWarn: Infinity }) : state, dtReal, walking, performance.now() / 1000);
   });
   updateDust(dust, crew[0].position, tau.v, Wd.v, dtReal);
-  if ($('follow').checked) {
+  crew[0].visible = !S.fp;
+  dust.material.size = S.fp ? 0.35 : 4;
+  // sky/fog: thicker with dust optical depth (visual cue; visibility itself is not modeled)
+  const dustK = Math.min(1, Math.max(0, (tau.v - 0.5) / 2));
+  scene.background.copy(SKY).lerp(DUSTSKY, dustK); scene.fog.color.copy(scene.background);
+  if (S.fp) {
+    scene.fog.near = 30; scene.fog.far = Math.max(250, 9000 / Math.max(0.3, tau.v));
+    const ahead = sampleAt(r, Math.min(r.durationS, S.tS + 40));
+    if (Math.hypot(ahead.x - p.x, ahead.y - p.y) > 2) {
+      const target = Math.atan2(ahead.y - p.y, ahead.x - p.x);
+      let d = target - S.fpYaw; d = Math.atan2(Math.sin(d), Math.cos(d));
+      S.fpYaw += d * Math.min(1, dtReal * 2 + (dtReal === 0 ? 1 : 0));
+    }
+    const eye = toWorld(p.x, p.y, p.z).add(new THREE.Vector3(0, 2.2 + (p.phase === 'stop' ? 0 : 0.05 * Math.sin(performance.now() / 160)), 0));
+    const yaw = S.fpYaw + S.fpYawOff;
+    const dir = new THREE.Vector3(Math.cos(yaw) * Math.cos(S.fpPitch), Math.sin(S.fpPitch), Math.sin(yaw) * Math.cos(S.fpPitch));
+    camera.position.copy(eye); camera.lookAt(eye.clone().add(dir));
+  } else {
+    scene.fog.near = W() * 0.9; scene.fog.far = W() * 3.5;
+  }
+  if (!S.fp && $('follow').checked) {
     const target = crew[0].position.clone().add(new THREE.Vector3(0, 20, 0));
     const delta = target.clone().sub(controls.target);
     controls.target.add(delta.multiplyScalar(Math.min(1, dtReal * 3 + (dtReal === 0 ? 1 : 0))));
@@ -234,6 +329,7 @@ function update(dtReal) {
   if (state.flags.includes('radiation')) hud.push(`<div class="hudmsg rad">☢ RADIATION: ${Math.round(dr.v)} µGy/day &gt; ${CONFIG.radWarnUGyPerDay.value} (illustrative threshold) — return to habitat / shelter</div>`);
   if (state.flags.includes('dust')) hud.push(`<div class="hudmsg dust">Dust: τ=${tau.v.toFixed(1)} · reduced visibility, abrasion & electrostatic risk to equipment</div>`);
   if (S.tS > CONFIG.evaLimitH.value * 3600) hud.push('<div class="hudmsg margin">EVA time budget exceeded</div>');
+  if (S.fp) hud.push('<div class="hudmsg fp">第一人称 · 拖动鼠标环视 · F 退出 · 地形 ×' + S.exag + ' 垂直夸张</div>');
   $('hud').innerHTML = hud.join('');
 
   // env panel
@@ -263,6 +359,7 @@ function update(dtReal) {
 let previewKey = null;
 function showPreview(tag) {
   if (tag === previewKey) return;
+  if (!tag && previewKey && previewKey.startsWith('place:')) return; // keep a card the user opened
   previewKey = tag;
   const el = $('preview');
   if (!tag) { el.classList.add('hidden'); return; }
@@ -270,10 +367,11 @@ function showPreview(tag) {
   const site = S.sites.sites[k];
   const img = site?.image ? { file: site.image, caption: site.imageCaption || '' } : S.images[k >= 0 ? k % Math.max(1, S.images.length) : 0];
   const name = site ? `${site.id} ${site.name}` : 'Destination';
+  const desc = site?.place ? `<div class="cap">${badgeImgHTML(site.resource, 18)} ${site.place.desc}</div>` : '';
   if (!img) {
-    el.innerHTML = `<b>Arrival preview — ${name}</b><div class="cap">No surface image downloaded yet. Run <code>scripts\\download_data.ps1</code> (raw images step).</div>`;
+    el.innerHTML = `<b>Arrival preview — ${name}</b>${desc}<div class="cap">No surface image downloaded yet. Run <code>scripts\\download_data.ps1</code> (raw images step).</div>`;
   } else {
-    el.innerHTML = `<b>Arrival preview — ${name}</b><img src="data/images/${img.file}" alt="Perseverance raw image">
+    el.innerHTML = `<b>Arrival preview — ${name}</b>${desc}<img src="data/images/${img.file}" alt="Perseverance raw image">
       <div class="cap">${chip(LABEL.OBS)} ${img.caption || ''}<br>Representative Perseverance image; the camera location may differ from this site. Credit: NASA/JPL-Caltech.</div>`;
   }
   el.classList.remove('hidden');
@@ -295,24 +393,45 @@ function wire() {
   $('maxSlope').onchange = (e) => { CONFIG.maxSlopeDeg.value = +e.target.value; colorTerrain(); recompute(); };
   $('evaLimit').onchange = (e) => { CONFIG.evaLimitH.value = +e.target.value; recompute(); };
   $('slopeOverlay').onchange = colorTerrain;
-  $('exag').oninput = (e) => { S.exag = +e.target.value; buildTerrainMesh(); buildRouteMeshes(); buildMarkers(); update(0); };
+  $('exag').oninput = (e) => { S.exag = +e.target.value; buildTerrainMesh(); buildRouteMeshes(); buildMarkers(); buildPlaces(); update(0); };
   const sc = () => {
     env.scenarios.dust = { on: $('scDust').checked, startS: +$('scDustT').value * 3600 };
     env.scenarios.sep = { on: $('scSep').checked, startS: +$('scSepT').value * 3600 };
     renderTable(); drawTrack(); update(0);
   };
   ['scDust', 'scDustT', 'scSep', 'scSepT'].forEach((id) => $(id).onchange = sc);
+  const setFP = (on) => {
+    S.fp = on; $('fpBtn').classList.toggle('on', on); controls.enabled = !on;
+    routeGroup.visible = !on; crew.forEach((c) => c.scale.setScalar(on ? 1 : SCALE));
+    camera.near = on ? 0.3 : 5; camera.fov = on ? 70 : 50; camera.updateProjectionMatrix();
+    S.fpYawOff = 0; S.fpPitch = -0.08;
+    if (!on) { const c = crew[0].position; controls.target.copy(c); camera.position.copy(c).add(new THREE.Vector3(-260, 240, 420)); }
+    update(0);
+  };
+  $('fpBtn').onclick = () => setFP(!S.fp);
+  addEventListener('keydown', (e) => { if (e.key === 'f' || e.key === 'F') { if (e.target.tagName !== 'INPUT') setFP(!S.fp); } if (e.key === ' ' && e.target.tagName !== 'INPUT') { e.preventDefault(); $('play').click(); } });
+  $('showTrav').onchange = () => { travGroup.visible = $('showTrav').checked; };
   $('play').onclick = () => { S.playing = !S.playing; $('play').textContent = S.playing ? '❚❚' : '▶'; };
   $('scrub').oninput = (e) => { const r = S.routes[S.sel]; if (r) { S.tS = (e.target.value / 1000) * r.durationS; update(0); } };
 
   // click-to-set destination (ignore drags)
-  let down = null;
-  renderer.domElement.addEventListener('pointerdown', (e) => down = [e.clientX, e.clientY]);
+  let down = null, last = null;
+  renderer.domElement.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; last = [e.clientX, e.clientY]; });
+  renderer.domElement.addEventListener('pointermove', (e) => {
+    if (!S.fp || !last || !(e.buttons & 1)) return;
+    S.fpYawOff += (e.clientX - last[0]) * 0.004;
+    S.fpPitch = Math.max(-1.2, Math.min(0.8, S.fpPitch - (e.clientY - last[1]) * 0.004));
+    last = [e.clientX, e.clientY]; update(0);
+  });
   renderer.domElement.addEventListener('pointerup', (e) => {
+    last = null;
     if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
     const rect = renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
     const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, camera);
+    const sp = ray.intersectObjects([...resGroup.children, ...markerGroup.children.filter((o) => o.userData.site !== undefined)])[0];
+    if (sp) { if (sp.object.userData.place !== undefined) showPlaceCard(sp.object.userData.place); else { S.destIdx = S.siteIdx[sp.object.userData.site]; recompute(); } return; }
+    if (S.fp) return;
     const hit = ray.intersectObject(terrainMesh)[0]; if (!hit) return;
     const c = Math.round((hit.point.x + W() / 2) / S.t.cell), r = Math.round((hit.point.z + H() / 2) / S.t.cell);
     if (c < 0 || r < 0 || c >= S.t.w || r >= S.t.h) return;
@@ -343,9 +462,22 @@ async function main() {
   const [{ terrain, sites }] = await Promise.all([loadTerrain(), env.load()]);
   try { const m = await (await fetch('data/images/manifest.json')).json(); S.images = m.items || []; } catch { S.images = []; }
   S.t = terrain; S.sites = sites;
+  if (terrain.source.center) {
+    try {
+      const pl = await (await fetch('data/places.json')).json();
+      if (pl && pl.places) S.places = pl;
+    } catch { S.places = null; }
+  }
   S.zmin = terrain.z.reduce((a, b) => Math.min(a, b), Infinity);
   const idx = ({ u, v }) => { const { c, r } = uvToCell(terrain, u, v); return snapTraversable(terrain, r * terrain.w + c); };
   S.habitatIdx = idx(sites.habitat);
+  if (S.places) {
+    S.places.places.forEach((p) => { p._xy = latLonToXY(p.lat, p.lon); });
+    const sci = S.places.places.filter((p) => p.science && p._xy.inside);
+    if (sci.length) {
+      sites.sites = sci.map((p, k) => ({ id: 'P' + (k + 1), name: p.name, u: p._xy.x / W(), v: p._xy.y / H(), label: LABEL.OBS, resource: p.resource, image: null, place: p }));
+    }
+  }
   S.siteIdx = sites.sites.map(idx);
   S.destIdx = S.siteIdx[1] ?? S.siteIdx[0];
   env.refElevation = terrain.z[S.habitatIdx];
@@ -359,7 +491,7 @@ async function main() {
   const h0 = idxWorld(S.habitatIdx);
   controls.target.copy(h0);
   camera.position.copy(h0).add(new THREE.Vector3(-260, 240, 420));
-  renderSites(); wire(); recompute();
+  renderSites(); renderResourceList(); wire(); buildPlaces(); recompute();
   requestAnimationFrame(loop);
 }
 main();

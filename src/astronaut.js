@@ -72,7 +72,11 @@ export function makeDust(count = 600) {
   const pos = new Float32Array(count * 3);
   for (let i = 0; i < count; i++) { pos[3 * i] = (Math.random() - 0.5) * 160; pos[3 * i + 1] = Math.random() * 60; pos[3 * i + 2] = (Math.random() - 0.5) * 160; }
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xe0a070, size: 4, transparent: true, opacity: 0.0, depthWrite: false }));
+  const c = document.createElement('canvas'); c.width = c.height = 32;
+  const g = c.getContext('2d'); const grd = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  grd.addColorStop(0, 'rgba(255,255,255,1)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 32, 32);
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xe0a070, size: 4, map: new THREE.CanvasTexture(c), transparent: true, opacity: 0.0, depthWrite: false }));
   pts.frustumCulled = false;
   return pts;
 }

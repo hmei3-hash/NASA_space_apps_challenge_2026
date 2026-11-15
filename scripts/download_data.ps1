@@ -6,7 +6,7 @@
 # Raw downloads go to data_raw\ (git-ignored). Small processed outputs go to public\data\ (committed).
 
 param(
-  [ValidateSet('all', 'terrain', 'meda', 'images')] [string]$Step = 'all',
+  [ValidateSet('all', 'places', 'terrain', 'meda', 'images')] [string]$Step = 'all',
   [int]$Sol = 300,                       # MEDA sol to replay (Historical Replay)
   [int[]]$ImageSols = @(421, 453, 475),  # Perseverance sols for arrival previews (delta-front campaign, approx.)
   [string[]]$Cameras = @('NAVCAM_LEFT', 'MCZ_LEFT', 'MCZ_RIGHT'),
@@ -30,6 +30,14 @@ function Get-Links([string]$url) {
     Select-Object -Unique
 }
 
+# ---------------------------------------------------------------- places (real names + Perseverance traverse)
+if ($Step -in 'all', 'places') {
+  Write-Host "`n[places] Perseverance end-of-sol waypoints (NASA/JPL MMGIS)" -ForegroundColor Cyan
+  $wp = Join-Path $Raw 'M20_waypoints.json'
+  curl.exe -L --fail --retry 3 -o $wp 'https://mars.nasa.gov/mmgis-maps/M20/Layers/json/M20_waypoints.json'
+  Write-Host "  Next:  python scripts\build_places.py data_raw\M20_waypoints.json" -ForegroundColor Yellow
+}
+
 # ---------------------------------------------------------------- terrain
 if ($Step -in 'all', 'terrain') {
   Write-Host "`n[terrain] CTX DEM mosaic of Jezero, 20 m/px (~87 MB, USGS Astrogeology / JPL)" -ForegroundColor Cyan
@@ -41,7 +49,7 @@ if ($Step -in 'all', 'terrain') {
   Write-Host "  Next (needs GDAL):"
   Write-Host "    conda create -n marswalk -c conda-forge python=3.11 gdal numpy -y" -ForegroundColor Yellow
   Write-Host "    conda activate marswalk" -ForegroundColor Yellow
-  Write-Host "    python scripts\preprocess_terrain.py --dem data_raw\M20_JezeroCrater_CTXDEM_20m.tif --ortho https://planetarymaps.usgs.gov/mosaic/mars2020_trn/CTX/JEZ_ctx_B_soc_008_orthoMosaic_6m_Eqc_latTs0_lon0.tif" -ForegroundColor Yellow
+  Write-Host "    python scripts\preprocess_terrain.py --dem data_raw\M20_JezeroCrater_CTXDEM_20m.tif --ortho data_raw\JEZ_ctx_orthoMosaic_6m.tif --fit-places public\data\places.json --overwrite-sites" -ForegroundColor Yellow
 }
 
 # ---------------------------------------------------------------- MEDA

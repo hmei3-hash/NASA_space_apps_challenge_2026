@@ -79,9 +79,9 @@ export function syntheticTerrain(n = 256, cell = 20, seed = 7) {
 export const DEFAULT_SITES_SYNTH = {
   habitat: { name: 'Habitat (assumed site)', u: 0.74, v: 0.80, label: LABEL.ASSUMP },
   sites: [
-    { id: 'S1', name: 'Delta front outcrop A', u: 0.30, v: 0.47, label: LABEL.ASSUMP, image: null },
-    { id: 'S2', name: 'Delta top, layered cap B', u: 0.55, v: 0.33, label: LABEL.ASSUMP, image: null },
-    { id: 'S3', name: 'Boulder field C', u: 0.18, v: 0.62, label: LABEL.ASSUMP, image: null },
+    { id: 'S1', name: 'Delta front outcrop A', u: 0.30, v: 0.47, label: LABEL.ASSUMP, image: null, resource: 'carbonate' },
+    { id: 'S2', name: 'Delta top, layered cap B', u: 0.55, v: 0.33, label: LABEL.ASSUMP, image: null, resource: 'lake' },
+    { id: 'S3', name: 'Boulder field C', u: 0.18, v: 0.62, label: LABEL.ASSUMP, image: null, resource: 'igneous' },
   ],
 };
 

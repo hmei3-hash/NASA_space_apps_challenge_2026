@@ -165,7 +165,11 @@ export function generateRoutes(t, habitatIdx, destIdx, sites, opts = {}) {
   }
 
   // Science route: greedily insert sites (cheapest insertion by straight-line estimate) while within budget.
-  const pool = sites.filter((s) => s.idx !== destIdx);
+  // keep the closest candidates to the habitat->destination corridor (bounded A* work on big maps)
+  const dxy = (a, b) => Math.hypot((a % t.w) - (b % t.w), Math.floor(a / t.w) - Math.floor(b / t.w));
+  const pool = sites.filter((s) => s.idx !== destIdx)
+    .sort((a, b) => (dxy(habitatIdx, a.idx) + dxy(a.idx, destIdx)) - (dxy(habitatIdx, b.idx) + dxy(b.idx, destIdx)))
+    .slice(0, opts.maxSites ?? 6);
   let order = [];
   const est = (ord) => {
     const seq = [habitatIdx, ...ord.map((s) => s.idx), destIdx, habitatIdx];

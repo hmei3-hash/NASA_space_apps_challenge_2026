@@ -31,14 +31,24 @@ ap.add_argument("--dem", required=True)
 ap.add_argument("--ortho")
 ap.add_argument("--lat", type=float, default=18.455, help="study-area centre (Assumption: delta-front area)")
 ap.add_argument("--lon", type=float, default=77.420)
-ap.add_argument("--size-km", type=float, default=5.12)
-ap.add_argument("--res", type=float, default=20.0, help="DEM cell size in metres")
-ap.add_argument("--ortho-px", type=int, default=2048)
+ap.add_argument("--size-km", type=float, default=16.0)
+ap.add_argument("--res", type=float, default=25.0, help="DEM cell size in metres (grid = size/res, keep <= ~700)")
+ap.add_argument("--ortho-px", type=int, default=4096)
+ap.add_argument("--fit-places", help="places.json from build_places.py: centre and size the crop to cover all places + 1.5 km margin")
 ap.add_argument("--habitat-lat", type=float, default=18.4447, help="Assumption: near the M2020 landing site")
 ap.add_argument("--habitat-lon", type=float, default=77.4508)
 ap.add_argument("--out", default=str(Path(__file__).resolve().parent.parent / "public" / "data"))
 ap.add_argument("--overwrite-sites", action="store_true")
 a = ap.parse_args()
+if a.fit_places:
+    pl = json.loads(Path(a.fit_places).read_text(encoding="utf-8"))["places"]
+    la = [p["lat"] for p in pl]; lo = [p["lon"] for p in pl]
+    a.lat, a.lon = (min(la) + max(la)) / 2, (min(lo) + max(lo)) / 2
+    km_lat = (max(la) - min(la)) * 59.27
+    km_lon = (max(lo) - min(lo)) * 59.27 * math.cos(math.radians(a.lat))
+    a.size_km = max(12, math.ceil(max(km_lat, km_lon) + 3.0))
+    a.res = max(a.res, round(a.size_km * 1000 / 700))
+    print(f"fit to {len(pl)} places: centre {a.lat:.4f}N {a.lon:.4f}E, {a.size_km} km, {a.res} m cells")
 
 def src_path(p):
     return "/vsicurl/" + p if p.startswith(("http://", "https://")) else p
@@ -69,6 +79,10 @@ if bad.any():
     band.SetNoDataValue(-1e30)
     gdal.FillNodata(band, None, 50, 0)
     z = band.ReadAsArray().astype(np.float32)
+    still = (z < -1e20) | ~np.isfinite(z)
+    if still.any():
+        print(f"  WARNING: {still.mean() * 100:.1f}% of the crop is outside DEM coverage; flattened to the median elevation")
+        z[still] = np.median(z[~still])
 h, w = z.shape
 z.astype("<f4").tofile(out / "heights.f32")
 
