@@ -184,7 +184,7 @@ function tickPlanet(dt) {
 
 // ---------- 30-second guided demo ----------
 // Drives the real app (globe replay, fly-in, routes, visor, warning dialog, rover, home) on a fixed script.
-const DEMO = { ms: 30000, teamKm: 30, frontH: 1.6, net: 'habitat' };
+const DEMO = { ms: 30000, frontH: 1.6, net: 'ring30', stationKm: 30 };
 let demoRun = null;
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
@@ -224,51 +224,59 @@ async function runDemo() {
     if (S.view !== 'globe') setView('globe');
     $('ppScen').value = 'gds2018'; $('ppSpeed').value = ''; setupPlanet();
 
-    // 1. planet: the 2018 storm, shared warning
-    demoCaption('2018 global dust storm, replayed. Meridiani is hit first and its broadcast warns Jezero 5 sols ahead.');
-    await tween((x) => { planet.sol = x; planet.key = ''; }, 0, 9.5, 4300, run); if (run.stop) return;
+    // 1. planet: the 2018 storm; bases work out where it started from the times it reached them
+    demoCaption('2018 global storm, replayed. No base knows where it began: from the times it reached them, they work it out and warn Jezero.');
+    await tween((x) => { planet.sol = x; planet.key = ''; }, 0, 10.5, 4600, run); if (run.stop) return;
 
     // 2. fly in
-    await at(4600); demoCaption('Jezero crater on NASA elevation and imagery data.');
-    flyIn(); await at(7000); if (run.stop) return;
+    await at(4800); demoCaption('Jezero crater, on NASA’s real elevation model and imagery.');
+    flyIn(); await at(7100); if (run.stop) return;
 
     // 3. plan
     selectTab('plan');
     $('routeCards').querySelector('.rcard[data-k=science]')?.click();
     $('scDust').checked = true; $('scDustT').value = DEMO.frontH; $('scNet').value = DEMO.net;
-    $('scTeam').checked = true; $('scTeamKm').value = DEMO.teamKm; $('scSep').checked = false;
+    $('scTeam').checked = false; $('scSep').checked = false;
     $('scDust').onchange();
     S.tS = 0; update(0);
-    demoCaption('Three routes, judged on slope, EVA time and radiation dose. Every number is labelled by its source.');
-    await at(10000); if (run.stop) return;
+    demoCaption('Three routes, scored on slope, time and radiation dose. Every number says where it came from.');
+    await at(9400); if (run.stop) return;
 
-    // 4. walk in first person
-    const td = front.detections()[0].t;
+    // 4. two seconds in the helmet, at 60× real time
+    const td = front.detections()[0].t, walkFrom = Math.min(td - 15 * 60, 25 * 60);
+    S.tS = walkFrom; update(0);
     $('fpBtn').click();
-    demoCaption('On the EVA: the helmet visor shows heading, next stop, partner, dose and dust.');
-    await tween(setT, 0, td, 5000, run); if (run.stop) return;
+    $('speed').value = '60'; S.playing = true;
+    demoCaption('In the helmet: heading, next stop, partner, dose, and Maya’s dose limit left.');
+    await at(11400); S.playing = false; if (run.stop) return;
 
-    // 5. warning from Team B
-    if (S.fp) $('fpBtn').click();
+    // 5. back to third person; a station upwind sees the front
+    $('fpBtn').click();
+    demoCaption(`A weather station ${DEMO.stationKm} km upwind detects a dust front moving at 25 m/s.`);
+    await tween(setT, S.tS, td, 3400, run); if (run.stop) return;
+
+    // 6. the decision: shortest route vs Monte Carlo pick
     S.tS = td; openReplan('dust');
-    demoCaption(`Team B, ${DEMO.teamKm} km upwind, sees the dust front first and shares it. The crew gets the call in seconds.`);
+    const odds = $('replan').querySelector('.rp-opt.rec .rp-v')?.textContent || '';
+    demoCaption(`2,000 Monte Carlo runs on the front’s speed: the staged rover gives Maya a ${odds.trim()}.`);
     const go = $('replan').querySelector('.rp-opt.rec button');
-    await at(17600); go?.classList.add('pulse');
-    await at(19600); if (run.stop) return;
+    await at(17200); go?.classList.add('pulse');
+    await at(18900); if (run.stop) return;
     go?.click(); S.playing = false; $('play').textContent = '▶';
 
-    // 6. shelter, then home
+    // 7. shelter, then home
     const r = S.routes[S.sel];
-    demoCaption('Wait out the gust front in the pressurized rover, then drive home inside it.');
-    await tween(setT, S.tS, r.durationS, 5600, run); if (run.stop) return;
+    demoCaption('She waits out the gust front in the pressurized rover, then drives home inside it.');
+    await tween(setT, S.tS, r.durationS, 5400, run); if (run.stop) return;
 
-    // 7. home, storm arrives
+    // 8. home, storm passes
     demoCaption('Home and safe while the storm passes. Marswalk: plan, warn, shelter, share.');
     S.homeFramed = false;
-    await tween(setT, r.durationS, Math.min(playEnd(r), Math.max(r.durationS, front.tHab) + 20 * 60), 4000, run);
+    await tween(setT, r.durationS, Math.min(playEnd(r), Math.max(r.durationS, front.tHab) + 20 * 60), 4200, run);
     await at(DEMO.ms);
   } finally {
-    S.playing = false; $('play').textContent = '▶';
+    S.playing = false; $('play').textContent = '▶'; $('speed').value = '300';
+    if (S.fp) $('fpBtn').click();
     $('demoCap').querySelector('i').style.width = '0';
     demoCaption(null);
     document.body.classList.remove('demo-mode');
