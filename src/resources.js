@@ -3,16 +3,16 @@ import * as THREE from 'three';
 import { ICONS } from './icons.js';
 
 export const RESOURCE_TYPES = {
-  lake:      { zh: '古湖泊沉积', en: 'Lake-bed mudstone', color: '#1e88e5' },
-  carbonate: { zh: '碳酸盐', en: 'Carbonate-bearing', color: '#26c6da' },
-  olivine:   { zh: '橄榄石火成岩', en: 'Olivine-rich igneous', color: '#43a047' },
-  igneous:   { zh: '火成岩', en: 'Igneous rock', color: '#c62828' },
-  sediment:  { zh: '沉积岩', en: 'Sedimentary rock', color: '#8d6e63' },
-  organics:  { zh: '有机物信号', en: 'Organics detected', color: '#8e24aa' },
-  regolith:  { zh: '风化层/沙波', en: 'Regolith / megaripple', color: '#d4a056' },
-  depot:     { zh: '样品库', en: 'Sample depot', color: '#f9a825' },
-  landing:   { zh: '着陆点', en: 'Landing site', color: '#eceff1' },
-  habitat:   { zh: '栖息舱', en: 'Habitat', color: '#ffffff' },
+  lake:      { en: 'Lake-bed mudstone', color: '#1e88e5', why: 'Fine layers that settled in standing water: the best record of the ancient lake and its habitability.' },
+  carbonate: { en: 'Carbonate-bearing', color: '#26c6da', why: 'Carbonates form in water and can preserve chemical traces of past environments.' },
+  olivine:   { en: 'Olivine-rich igneous', color: '#43a047', why: 'Olivine-rich igneous rock: dates the crater floor and records water–rock alteration.' },
+  igneous:   { en: 'Igneous rock', color: '#c62828', why: 'Igneous rock can give absolute ages for Jezero history.' },
+  sediment:  { en: 'Sedimentary rock', color: '#8d6e63', why: 'Sediment the river carried into the lake.' },
+  organics:  { en: 'Organics detected', color: '#8e24aa', why: 'Organic compounds detected: a priority astrobiology target (not proof of life).' },
+  regolith:  { en: 'Regolith / megaripple', color: '#d4a056', why: 'Loose surface material: relevant to dust hazards and in-situ resource use.' },
+  depot:     { en: 'Sample depot', color: '#f9a825', why: 'Cached sample tubes for a future return to Earth.' },
+  landing:   { en: 'Landing site', color: '#eceff1', why: 'Historic landing site on flat, well-characterized ground.' },
+  habitat:   { en: 'Habitat', color: '#ffffff', why: 'EVA start and end point.' },
 };
 
 const cache = new Map();

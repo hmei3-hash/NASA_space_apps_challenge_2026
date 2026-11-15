@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CONFIG, LABEL, ROUTE_STYLE } from './config.js';
 import { loadTerrain, uvToCell } from './terrain.js';
-import { generateRoutes, sampleAt, snapTraversable, overlap } from './routing.js';
+import { generateRoutes, sampleAt, snapTraversable, overlap, speedKmh } from './routing.js';
 import { Environment, MARS_HOUR_S } from './environment.js';
 import { makeAstronaut, animate, classifyState, GAIT_TEXT, makeDust, updateDust, SCALE } from './astronaut.js';
 import { RESOURCE_TYPES, badgeSprite, badgeImgHTML } from './resources.js';
@@ -112,7 +112,7 @@ function buildMarkers() {
     m.position.copy(p).add(new THREE.Vector3(0, h / 2, 0)); markerGroup.add(m);
     const l = labelSprite(text, '#' + color.toString(16).padStart(6, '0')); l.position.copy(p).add(new THREE.Vector3(0, h + 70, 0)); markerGroup.add(l);
   };
-  const hb = badgeSprite('habitat', 0.055); hb.position.copy(idxWorld(S.habitatIdx)).add(new THREE.Vector3(0, 60, 0)); markerGroup.add(hb);
+  const hb = badgeSprite('habitat', 0.055); hb.position.copy(idxWorld(S.habitatIdx)).add(new THREE.Vector3(0, 60, 0)); hb.userData.habitat = true; markerGroup.add(hb);
   const hl = labelSprite('⌂ ' + S.sites.habitat.name); hl.position.copy(idxWorld(S.habitatIdx)).add(new THREE.Vector3(0, 60, 0)); hl.center.set(0.5, -0.9); markerGroup.add(hl);
   const dome = new THREE.Mesh(new THREE.SphereGeometry(40, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xeeeeee }));
   dome.position.copy(idxWorld(S.habitatIdx)); markerGroup.add(dome);
@@ -159,24 +159,104 @@ function buildPlaces() {
   travGroup.visible = $('showTrav').checked;
 }
 
-function showPlaceCard(k) {
-  const p = S.places.places[k], t = RESOURCE_TYPES[p.resource];
-  const el = $('preview'); previewKey = 'place:' + k;
-  el.innerHTML = `<div class="pc-head">${badgeImgHTML(p.resource, 34)}<div><b>${p.name}</b><br><span class="cap">${t.zh} · ${t.en}</span></div><button class="x" id="pcClose">✕</button></div>
-    <div class="cap">${p.desc}</div>
-    <div class="cap">${chip(LABEL.OBS)} position = Perseverance end-of-sol waypoint, sol ${p.waypointSol} (sample sol ${p.sol}). Basis: ${p.basis}</div>
-    <button id="pcGo" class="go">设为目的地 / Go here</button>`;
+// ---------- info cards (resources, habitat, science sites) ----------
+const idxXY = (i) => ({ x: (i % S.t.w) * S.t.cell, y: Math.floor(i / S.t.w) * S.t.cell });
+const terrLabel = () => (S.t.source.kind === 'real' ? LABEL.OBS : null);
+
+/** Quick reachability estimate from the habitat: straight line x1.25 at flat-ground suit speed. */
+function reachEstimate(idx) {
+  const a = idxXY(S.habitatIdx), b = idxXY(idx);
+  const km = Math.hypot(a.x - b.x, a.y - b.y) / 1000;
+  const oneWayH = (km * 1.25) / speedKmh(0);
+  const roundH = 2 * oneWayH + CONFIG.stopMinPerSite.value / 60;
+  return { km, oneWayH, roundH, fits: roundH <= CONFIG.evaLimitH.value };
+}
+const fmtH = (h) => fmtHM(h * 3600);
+
+function locationRows(idx) {
+  const { x, y } = idxXY(idx), ll = latLon(x, y), tl = terrLabel();
+  return [
+    ['Coordinates', ll || `${(x / 1000).toFixed(2)} km E, ${(y / 1000).toFixed(2)} km S`, tl],
+    ['Elevation', `${S.t.z[idx].toFixed(0)} m`, tl],
+    ['Local slope', `${S.t.slope[idx].toFixed(1)}°${S.t.slope[idx] > CONFIG.maxSlopeDeg.value ? ' (above limit)' : ''}`, tl],
+  ];
+}
+
+function showCard({ kind, title, subtitle, desc, rows, foot, goIdx }) {
+  const el = $('preview');
+  const rowHTML = rows.map(([k, v, l]) => `<div class="k">${k}</div><div class="v">${v} ${l ? chip(l) : ''}</div>`).join('');
+  el.innerHTML = `<div class="pc-head">${badgeImgHTML(kind, 34)}<div><b>${title}</b><br><span class="cap">${subtitle}</span></div><button class="x" id="pcClose">✕</button></div>
+    ${desc ? `<div class="cap">${desc}</div>` : ''}
+    <div class="env card-rows">${rowHTML}</div>
+    ${foot ? `<div class="cap">${foot}</div>` : ''}
+    ${goIdx !== undefined ? '<button id="pcGo" class="go">Set as destination</button>' : ''}`;
   el.classList.remove('hidden');
   $('pcClose').onclick = () => { el.classList.add('hidden'); previewKey = null; };
-  $('pcGo').onclick = () => { S.destIdx = snapTraversable(S.t, xyIdx(p._xy), CONFIG.maxSlopeDeg.value); recompute(); };
+  if (goIdx !== undefined) $('pcGo').onclick = () => { S.destIdx = snapTraversable(S.t, goIdx, CONFIG.maxSlopeDeg.value); recompute(); };
 }
+
+function reachRows(idx) {
+  const r = reachEstimate(idx), dz = S.t.z[idx] - S.t.z[S.habitatIdx];
+  return [
+    ['From habitat', `${r.km.toFixed(2)} km straight line, ${dz >= 0 ? '+' : ''}${dz.toFixed(0)} m`, null],
+    ['Est. walk (one way)', fmtH(r.oneWayH), LABEL.MODEL],
+    ['Est. round trip + stop', `${fmtH(r.roundH)} — ${r.fits ? 'fits' : 'exceeds'} the ${CONFIG.evaLimitH.value} h EVA`, LABEL.ASSUMP],
+  ];
+}
+
+function showPlaceCard(k) {
+  const p = S.places.places[k], t = RESOURCE_TYPES[p.resource], idx = xyIdx(p._xy);
+  previewKey = 'place:' + k;
+  showCard({
+    kind: p.resource, title: p.name, subtitle: `${t.en}${p.science ? ' · science site' : ''}`,
+    desc: `${p.desc}<br><i>Why it matters:</i> ${t.why}`,
+    rows: [...locationRows(idx), ...reachRows(idx), ['Visited by Perseverance', `sample sol ${p.sol} (waypoint sol ${p.waypointSol})`, LABEL.OBS]],
+    foot: `Position = Perseverance end-of-sol waypoint; the feature lies within tens of metres. Basis: ${p.basis}. Walk estimates are straight-line ×1.25; generate routes for real values.`,
+    goIdx: idx,
+  });
+}
+
+function showSiteCard(k) {
+  const s = S.sites.sites[k], idx = S.siteIdx[k], kind = s.resource || 'sediment', t = RESOURCE_TYPES[kind];
+  if (s.place) { const pk = S.places.places.indexOf(s.place); if (pk >= 0) return showPlaceCard(pk); }
+  previewKey = 'site:' + k;
+  showCard({ kind, title: `${s.id} ${s.name}`, subtitle: `${t.en} · ${s.label || LABEL.ASSUMP} position`, desc: t.why,
+    rows: [...locationRows(idx), ...reachRows(idx)], foot: 'Placeholder site on synthetic terrain.', goIdx: idx });
+}
+
+function showHabitatCard() {
+  const idx = S.habitatIdx, z = S.t.z[idx], tS = S.tS;
+  const T = env.temperature(tS), P = env.pressure(tS, z), dr = env.doseRate(tS), tau = env.dustTau(tS);
+  const targets = S.places ? S.places.places.filter((p) => p._xy.inside).map((p) => ({ name: p.name, idx: xyIdx(p._xy) }))
+    : S.sites.sites.map((s, k) => ({ name: s.name, idx: S.siteIdx[k] }));
+  const est = targets.map((q) => ({ ...q, ...reachEstimate(q.idx) })).sort((a, b) => a.km - b.km);
+  const reachable = est.filter((q) => q.fits);
+  previewKey = 'habitat';
+  showCard({
+    kind: 'habitat', title: S.sites.habitat.name, subtitle: 'EVA start / end point',
+    desc: RESOURCE_TYPES.habitat.why + ' Location is assumed, not a real landing or base site.',
+    rows: [
+      ...locationRows(idx),
+      ['Crew', `${CONFIG.crewSize.value} astronauts on foot`, LABEL.ASSUMP],
+      ['EVA budget', `${CONFIG.evaLimitH.value} h from ${CONFIG.evaStartLtstH.value}:00 LTST`, LABEL.ASSUMP],
+      [`Air temp (T+${fmtHM(tS)})`, `${T.v.toFixed(1)} °C`, T.label],
+      ['Pressure here', `${P.v.toFixed(0)} Pa`, P.label],
+      ['Dust optical depth τ', tau.v.toFixed(2), tau.label],
+      ['Dose rate', `${Math.round(dr.v)} µGy/day`, dr.label],
+      ['Places in reach', `${reachable.length} of ${est.length} (round trip within budget)`, LABEL.MODEL],
+      ['Nearest', est[0] ? `${est[0].name}, ${est[0].km.toFixed(2)} km` : '—', null],
+    ],
+    foot: 'Environment values follow the timeline. Reach is a straight-line estimate; use the routes for real distances.',
+  });
+}
+
 const xyIdx = (q) => Math.min(S.t.h - 1, Math.max(0, Math.round(q.y / S.t.cell))) * S.t.w + Math.min(S.t.w - 1, Math.max(0, Math.round(q.x / S.t.cell)));
 
 function renderResourceList() {
   if (!S.places) { $('resList').innerHTML = '<p class="note">Run <code>scripts\\build_places.py</code> to load real Jezero place names.</p>'; return; }
   const inside = S.places.places.map((p, k) => ({ p, k })).filter(({ p }) => p._xy.inside);
   const kinds = [...new Set(inside.map(({ p }) => p.resource))];
-  $('resList').innerHTML = `<div class="kinds">${kinds.map((kd) => `<label class="kind"><input type="checkbox" data-kind="${kd}" ${S.hiddenKinds.has(kd) ? '' : 'checked'}>${badgeImgHTML(kd, 18)} ${RESOURCE_TYPES[kd].zh}</label>`).join('')}</div>` +
+  $('resList').innerHTML = `<div class="kinds">${kinds.map((kd) => `<label class="kind"><input type="checkbox" data-kind="${kd}" ${S.hiddenKinds.has(kd) ? '' : 'checked'}>${badgeImgHTML(kd, 18)} ${RESOURCE_TYPES[kd].en}</label>`).join('')}</div>` +
     inside.map(({ p, k }) => `<div class="site">${badgeImgHTML(p.resource, 20)}<span class="pn" data-k="${k}">${p.name}</span><small>sol ${p.sol}</small></div>`).join('') +
     `<p class="note">${inside.length}/${S.places.places.length} places inside this map. ${ICON_ATTRIBUTION}</p>`;
   $('resList').querySelectorAll('input[data-kind]').forEach((cb) => cb.onchange = () => {
@@ -222,7 +302,31 @@ function routeDose(r) {
   return env.cumulativeDose(r.durationS).v;
 }
 
+function routeBlurb(k) {
+  const R = S.routes, r = R[k], sh = R.shortest, budget = CONFIG.evaLimitH.value * 3600;
+  if (!r) return `No route under the ${CONFIG.maxSlopeDeg.value}° slope limit.`;
+  const margin = budget - r.durationS;
+  const head = `${(r.distanceM / 1000).toFixed(1)} km · ${fmtHM(r.durationS)} · max ${r.maxSlopeDeg.toFixed(0)}°`;
+  let why = '';
+  if (k === 'shortest') why = 'Fastest way to the destination within the slope limit.';
+  if (k === 'gentlest') why = sh ? (Math.abs(r.distanceM - sh.distanceM) < 50 ? 'Same line as Shortest here: no gentler option exists.'
+    : `+${((r.distanceM - sh.distanceM) / 1000).toFixed(1)} km vs Shortest to keep max slope ${r.maxSlopeDeg.toFixed(0)}° (vs ${sh.maxSlopeDeg.toFixed(0)}°).`) : 'Avoids steep ground.';
+  if (k === 'science') {
+    const names = r.visited.map((id) => S.sites.sites.find((s) => s.id === id)?.name || id);
+    why = names.length ? `Samples ${names.length} site${names.length > 1 ? 's' : ''} on the way: ${names.join(', ')}.` : 'No extra science site fits in the EVA budget.';
+    if (sh) why += ` +${fmtHM(Math.max(0, r.durationS - sh.durationS))} vs Shortest.`;
+  }
+  return `<b>${head}</b><br>${why}<br><span class="${margin < 0 ? 'bad' : 'ok'}">${margin < 0 ? 'Over budget by ' + fmtHM(-margin) : 'Return margin ' + fmtHM(margin)}</span>`;
+}
+
+function renderCards() {
+  $('routeCards').innerHTML = Object.keys(ROUTE_STYLE).map((k) => `<div class="rcard ${k === S.sel ? 'sel' : ''}" data-k="${k}" style="--c:#${ROUTE_STYLE[k].color.toString(16).padStart(6, '0')}">
+    <div class="rname">${ROUTE_STYLE[k].name}</div><div class="rtxt">${routeBlurb(k)}</div></div>`).join('');
+  $('routeCards').querySelectorAll('.rcard').forEach((c) => c.onclick = () => { if (!S.routes[c.dataset.k]) return; S.sel = c.dataset.k; buildRouteMeshes(); renderTable(); drawTrack(); update(0); });
+}
+
 function renderTable() {
+  renderCards();
   const keys = Object.keys(ROUTE_STYLE);
   const R = S.routes;
   const budget = CONFIG.evaLimitH.value * 3600;
@@ -329,7 +433,7 @@ function update(dtReal) {
   if (state.flags.includes('radiation')) hud.push(`<div class="hudmsg rad">☢ RADIATION: ${Math.round(dr.v)} µGy/day &gt; ${CONFIG.radWarnUGyPerDay.value} (illustrative threshold) — return to habitat / shelter</div>`);
   if (state.flags.includes('dust')) hud.push(`<div class="hudmsg dust">Dust: τ=${tau.v.toFixed(1)} · reduced visibility, abrasion & electrostatic risk to equipment</div>`);
   if (S.tS > CONFIG.evaLimitH.value * 3600) hud.push('<div class="hudmsg margin">EVA time budget exceeded</div>');
-  if (S.fp) hud.push('<div class="hudmsg fp">第一人称 · 拖动鼠标环视 · F 退出 · 地形 ×' + S.exag + ' 垂直夸张</div>');
+  if (S.fp) hud.push('<div class="hudmsg fp">First person · drag to look around · F to exit · terrain ×' + S.exag + ' vertical exaggeration</div>');
   $('hud').innerHTML = hud.join('');
 
   // env panel
@@ -359,7 +463,7 @@ function update(dtReal) {
 let previewKey = null;
 function showPreview(tag) {
   if (tag === previewKey) return;
-  if (!tag && previewKey && previewKey.startsWith('place:')) return; // keep a card the user opened
+  if (!tag && previewKey && /^(place|site|habitat)/.test(previewKey)) return; // keep a card the user opened
   previewKey = tag;
   const el = $('preview');
   if (!tag) { el.classList.add('hidden'); return; }
@@ -380,10 +484,12 @@ function showPreview(tag) {
 // ---------- UI wiring ----------
 function renderSites() {
   $('siteList').innerHTML = [
-    `<div class="site"><span>⌂ ${S.sites.habitat.name} ${chip(S.sites.habitat.label || LABEL.ASSUMP)}</span></div>`,
-    ...S.sites.sites.map((s, k) => `<div class="site"><span>${s.id} ${s.name} ${chip(s.label || LABEL.ASSUMP)}</span><button data-k="${k}">Go here</button></div>`),
+    `<div class="site">${badgeImgHTML('habitat', 20)}<span class="pn" id="habItem">${S.sites.habitat.name} ${chip(S.sites.habitat.label || LABEL.ASSUMP)}</span></div>`,
+    ...S.sites.sites.map((s, k) => `<div class="site">${badgeImgHTML(s.resource || 'sediment', 20)}<span class="pn" data-s="${k}">${s.id} ${s.name} ${chip(s.label || LABEL.ASSUMP)}</span><button data-k="${k}">Go here</button></div>`),
   ].join('');
   $('siteList').querySelectorAll('button').forEach((b) => b.onclick = () => { S.destIdx = S.siteIdx[+b.dataset.k]; recompute(); });
+  $('siteList').querySelectorAll('.pn[data-s]').forEach((el) => el.onclick = () => showSiteCard(+el.dataset.s));
+  $('habItem').onclick = showHabitatCard;
 }
 
 function wire() {
@@ -411,6 +517,7 @@ function wire() {
   $('fpBtn').onclick = () => setFP(!S.fp);
   addEventListener('keydown', (e) => { if (e.key === 'f' || e.key === 'F') { if (e.target.tagName !== 'INPUT') setFP(!S.fp); } if (e.key === ' ' && e.target.tagName !== 'INPUT') { e.preventDefault(); $('play').click(); } });
   $('showTrav').onchange = () => { travGroup.visible = $('showTrav').checked; };
+  $('detailsBtn').onclick = () => { const t = $('routeTable'); t.classList.toggle('hidden'); $('detailsBtn').textContent = t.classList.contains('hidden') ? 'Show detailed comparison ▾' : 'Hide detailed comparison ▴'; };
   $('play').onclick = () => { S.playing = !S.playing; $('play').textContent = S.playing ? '❚❚' : '▶'; };
   $('scrub').oninput = (e) => { const r = S.routes[S.sel]; if (r) { S.tS = (e.target.value / 1000) * r.durationS; update(0); } };
 
@@ -429,8 +536,12 @@ function wire() {
     const rect = renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
     const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, camera);
-    const sp = ray.intersectObjects([...resGroup.children, ...markerGroup.children.filter((o) => o.userData.site !== undefined)])[0];
-    if (sp) { if (sp.object.userData.place !== undefined) showPlaceCard(sp.object.userData.place); else { S.destIdx = S.siteIdx[sp.object.userData.site]; recompute(); } return; }
+    const sp = ray.intersectObjects([...resGroup.children, ...markerGroup.children.filter((o) => o.userData.site !== undefined || o.userData.habitat)])[0];
+    if (sp) {
+      const u = sp.object.userData;
+      if (u.place !== undefined) showPlaceCard(u.place); else if (u.habitat) showHabitatCard(); else showSiteCard(u.site);
+      return;
+    }
     if (S.fp) return;
     const hit = ray.intersectObject(terrainMesh)[0]; if (!hit) return;
     const c = Math.round((hit.point.x + W() / 2) / S.t.cell), r = Math.round((hit.point.z + H() / 2) / S.t.cell);
