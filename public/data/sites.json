@@ -1,0 +1,35 @@
+{
+ "habitat": {
+  "name": "Habitat (assumed, near M2020 landing site)",
+  "u": 0.8382,
+  "v": 0.6192,
+  "label": "Assumption"
+ },
+ "sites": [
+  {
+   "id": "S1",
+   "name": "Delta front outcrop (placeholder)",
+   "u": 0.3047,
+   "v": 0.4414,
+   "label": "Assumption",
+   "image": null
+  },
+  {
+   "id": "S2",
+   "name": "Delta top layered unit (placeholder)",
+   "u": 0.1484,
+   "v": 0.2656,
+   "label": "Assumption",
+   "image": null
+  },
+  {
+   "id": "S3",
+   "name": "Scarp base boulders (placeholder)",
+   "u": 0.4414,
+   "v": 0.207,
+   "label": "Assumption",
+   "image": null
+  }
+ ],
+ "note": "Science sites are placeholders. Click the map in the app to read u/v, then edit this file."
+}

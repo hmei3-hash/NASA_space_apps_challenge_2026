@@ -1,0 +1,47 @@
+{
+    "source":  "mars.nasa.gov raw images API (NASA/JPL-Caltech)",
+    "items":  [
+                  {
+                      "file":  "NLMV0421_0704320298_724ECM_N0233091TRAV00163_00_2LLJ.jpg",
+                      "sol":  421,
+                      "camera":  "NAVCAM_LEFT",
+                      "imageid":  "NLMV0421_0704320298_724ECM_N0233091TRAV00163_00_2LLJ",
+                      "caption":  "Sol 421 - NAVCAM_LEFT - 2022-04-27T08:38:05.091"
+                  },
+                  {
+                      "file":  "ZL7_0421_0704327696_320EBY_N0233142ZCAM01002_1100LMJ.jpg",
+                      "sol":  421,
+                      "camera":  "MCZ_LEFT",
+                      "imageid":  "ZL7_0421_0704327696_320EBY_N0233142ZCAM01002_1100LMJ",
+                      "caption":  "Sol 421 - MCZ_LEFT - 2022-04-27T10:42:06.894"
+                  },
+                  {
+                      "file":  "ZL0_0453_0707153225_081EBY_N0260000ZCAM03372_1100LMJ.jpg",
+                      "sol":  453,
+                      "camera":  "MCZ_LEFT",
+                      "imageid":  "ZL0_0453_0707153225_081EBY_N0260000ZCAM03372_1100LMJ",
+                      "caption":  "Sol 453 - MCZ_LEFT - 2022-05-30T03:36:08.165"
+                  },
+                  {
+                      "file":  "ZL7_0453_0707159843_292EBY_N0260000ZCAM01013_0340LMJ.jpg",
+                      "sol":  453,
+                      "camera":  "MCZ_LEFT",
+                      "imageid":  "ZL7_0453_0707159843_292EBY_N0260000ZCAM01013_0340LMJ",
+                      "caption":  "Sol 453 - MCZ_LEFT - 2022-05-30T05:25:55.230"
+                  },
+                  {
+                      "file":  "ZL7_0475_0709115766_306EBY_N0260850ZCAM01018_0340LMJ.jpg",
+                      "sol":  475,
+                      "camera":  "MCZ_LEFT",
+                      "imageid":  "ZL7_0475_0709115766_306EBY_N0260850ZCAM01018_0340LMJ",
+                      "caption":  "Sol 475 - MCZ_LEFT - 2022-06-21T20:45:14.638"
+                  },
+                  {
+                      "file":  "ZR7_0475_0709115766_306EBY_N0260850ZCAM01018_0340LMJ.jpg",
+                      "sol":  475,
+                      "camera":  "MCZ_RIGHT",
+                      "imageid":  "ZR7_0475_0709115766_306EBY_N0260850ZCAM01018_0340LMJ",
+                      "caption":  "Sol 475 - MCZ_RIGHT - 2022-06-21T20:45:14.640"
+                  }
+              ]
+}
