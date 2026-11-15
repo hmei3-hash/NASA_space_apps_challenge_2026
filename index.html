@@ -36,6 +36,7 @@
       <div id="hint">Click the ground to set a destination. Drag to orbit, scroll to zoom.</div>
       <div id="preview" class="hidden"></div>
       <div id="globeCard" aria-live="polite"></div>
+      <div id="replan" hidden></div>
       <div id="fade" aria-hidden="true"></div>
     </div>
 
@@ -55,7 +56,12 @@
       </section>
       <section>
         <h2>Scenario events <small>injected, not predicted</small></h2>
-        <label class="scen"><input id="scDust" type="checkbox" /> Dust storm at T+<input id="scDustT" aria-label="Dust storm start, hours after EVA start" type="number" value="1" min="0" max="10" step="0.5" /> h</label>
+        <label class="scen"><input id="scDust" type="checkbox" /> Dust front reaches habitat at T+<input id="scDustT" aria-label="Dust front arrival at the habitat, hours after EVA start" type="number" value="2.5" min="0" max="10" step="0.5" /> h</label>
+        <label class="scen netsel">Warning network <select id="scNet" aria-label="Surface weather station network">
+          <option value="ez100" selected>EZ ring, 4 stations at 100 km</option>
+          <option value="ring30">Compact ring, 4 at 30 km</option>
+          <option value="habitat">Habitat station only</option>
+        </select></label>
         <label class="scen"><input id="scSep" type="checkbox" /> Solar particle event at T+<input id="scSepT" aria-label="Solar particle event start, hours after EVA start" type="number" value="1.5" min="0" max="10" step="0.5" /> h</label>
       </section>
       <section class="legend">

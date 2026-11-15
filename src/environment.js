@@ -21,7 +21,7 @@ export class Environment {
   constructor() {
     this.meda = null;
     this.rad = RAD_FALLBACK;
-    this.scenarios = { dust: { on: false, startS: 1 * 3600 }, sep: { on: false, startS: 1.5 * 3600 } };
+    this.scenarios = { dust: { on: false, startS: 2.5 * 3600 }, sep: { on: false, startS: 1.5 * 3600 } };
     this.refElevation = 0; // elevation at which MEDA pressure is taken to apply (habitat)
   }
 
@@ -81,7 +81,8 @@ export class Environment {
       if (v !== null) { label = LABEL.REPLAY; src = `MEDA WS, sol ${this.meda.sol}, at rover`; }
     }
     if (v === null) v = 2.5 + 5 * Math.exp(-(((h - 13.5) / 2.5) ** 2));
-    if (this.scenarios.dust.on && tS >= this.scenarios.dust.startS) { v = Math.max(v, 15); label = LABEL.SCENARIO; src = 'dust-storm scenario'; }
+    const ds = this.scenarios.dust.crewStartS ?? this.scenarios.dust.startS;
+    if (this.scenarios.dust.on && tS >= ds) { v = Math.max(v, 15); label = LABEL.SCENARIO; src = 'dust-storm scenario'; }
     const q = 0.5 * RHO_AIR * v * v;
     const short = label === LABEL.REPLAY ? 'MEDA at the rover' : label === LABEL.SCENARIO ? 'Dust storm scenario' : 'Placeholder daily cycle';
     return { v, unit: 'm/s', label, src, short, dynamicPressurePa: q };
@@ -89,9 +90,9 @@ export class Environment {
 
   dustTau(tS) {
     const base = CONFIG.dustTauBaseline.value;
-    const d = this.scenarios.dust;
-    if (d.on && tS >= d.startS) {
-      const ramp = Math.min(1, (tS - d.startS) / 1800);
+    const d = this.scenarios.dust, ds = d.crewStartS ?? d.startS;
+    if (d.on && tS >= ds) {
+      const ramp = Math.min(1, (tS - ds) / 600); // the front brings the dust within minutes
       return { v: base + (CONFIG.dustTauStorm.value - base) * ramp, label: LABEL.SCENARIO, src: 'injected dust-storm event', short: 'Injected dust storm' };
     }
     return { v: base, label: LABEL.ASSUMP, src: 'typical non-storm column dust optical depth', short: 'Typical clear-season value' };

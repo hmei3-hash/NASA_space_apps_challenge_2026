@@ -7,7 +7,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CONFIG, LABEL, ROUTE_STYLE } from './config.js';
 import { loadTerrain, uvToCell } from './terrain.js';
-import { generateRoutes, sampleAt, snapTraversable, overlap, speedKmh } from './routing.js';
+import { generateRoutes, sampleAt, snapTraversable, overlap, speedKmh, astar, walkedCells, spliceRoute } from './routing.js';
+import { CASES } from './research.js';
+import { DustFront, FRONT, NETWORKS } from './dustfront.js';
 import { Environment, MARS_HOUR_S } from './environment.js';
 import { makeAstronaut, animate, classifyState, GAIT_TEXT, makeDust, updateDust, SCALE } from './astronaut.js';
 import { RESOURCE_TYPES, badgeSprite, badgeImgHTML } from './resources.js';
@@ -15,18 +17,20 @@ import { ICON_ATTRIBUTION } from './icons.js';
 import { makeHabitat, tickHabitat, HAB_SCALE } from './habitat.js';
 import { ProfileStrip, GAIT_LABEL } from './profile.js';
 import { GlobeView } from './globe.js';
+import { Visor, bearing, yawToHeading } from './visor.js';
 
 const $ = (id) => document.getElementById(id);
 const CHIP = { [LABEL.OBS]: 'o', [LABEL.REPLAY]: 'r', [LABEL.MODEL]: 'm', [LABEL.ASSUMP]: 'a', [LABEL.SCENARIO]: 's' };
 const PVWORD = { o: 'measured', r: 'replay', m: 'model', a: 'assumed', s: 'scenario' };
 const chip = (label) => [...new Set(label.split(' + '))].map((l) => { const c = CHIP[l] || 'm'; return `<i class="pv ${c}" title="${l}">${PVWORD[c]}</i>`; }).join(' ');
+const fmtMin = (s) => (s < 3600 ? `${Math.max(0, Math.round(s / 60))} min` : `${fmtHM(s)} h`);
 const fmtHM = (s) => { const m = Math.round(s / 60); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
 const MARS_R = 3396190;
 
 const S = {
   t: null, sites: null, habitatIdx: 0, destIdx: 0, siteIdx: [], routes: {}, sel: 'gentlest',
   tS: 0, playing: false, exag: CONFIG.verticalExaggeration, zmin: 0, images: [],
-  places: null, view: 'globe', fp: false, fpYaw: 0, fpYawOff: 0, fpPitch: -0.08, hiddenKinds: new Set(),
+  places: null, view: 'globe', replanInfo: null, handled: { dust: false, sep: false }, fp: false, fpYaw: 0, fpYawOff: 0, fpPitch: -0.08, hiddenKinds: new Set(),
 };
 const env = new Environment();
 
@@ -63,6 +67,7 @@ function resize() {
   globe?.resize(w, h);
 }
 let globe = null;
+const visor = new Visor(viewport);
 const GALE = { lat: -5.37, lon: 137.81 };
 
 function siteInfo() {
@@ -358,7 +363,8 @@ function recompute() {
   const sites = S.sites.sites.map((s, k) => ({ id: s.id, idx: S.siteIdx[k] }));
   S.routes = generateRoutes(t, S.habitatIdx, S.destIdx, sites, { maxSlope: CONFIG.maxSlopeDeg.value, evaLimitH: CONFIG.evaLimitH.value });
   if (!S.routes[S.sel]) S.sel = Object.keys(S.routes).find((k) => S.routes[k]) || S.sel;
-  S.tS = 0;
+  S.tS = 0; S.replanInfo = null; S.handled = { dust: false, sep: false }; closeReplan();
+  placeRover(); setupFront();
   buildRouteMeshes(); buildMarkers(); renderTable(); drawTrack(); update(0);
 }
 
@@ -368,6 +374,10 @@ function routeDose(r) {
 
 function routeBlurb(k) {
   const R = S.routes, r = R[k], sh = R.shortest, budget = CONFIG.evaLimitH.value * 3600;
+  if (k === 'replan' && r && S.replanInfo) {
+    const m = budget - r.durationS;
+    return `<div class="rhead">${(r.distanceM / 1000).toFixed(1)} km&ensp;${fmtHM(r.durationS)} h&ensp;max ${r.maxSlopeDeg.toFixed(0)}°</div><div class="rtxt">Changed at T+${fmtHM(S.replanInfo.at)} after the ${S.replanInfo.kind === 'dust' ? 'dust storm' : 'solar particle event'}: ${S.replanInfo.name.toLowerCase()}. <span class="${m < 0 ? 'bad' : 'ok'}">${m < 0 ? 'Over budget by ' + fmtHM(-m) + '.' : fmtHM(m) + ' spare.'}</span></div>`;
+  }
   if (!r) return `No route under the ${CONFIG.maxSlopeDeg.value}° slope limit.`;
   const margin = budget - r.durationS;
   const head = `${(r.distanceM / 1000).toFixed(1)} km&ensp;${fmtHM(r.durationS)} h&ensp;max ${r.maxSlopeDeg.toFixed(0)}°`;
@@ -384,14 +394,14 @@ function routeBlurb(k) {
 }
 
 function renderCards() {
-  $('routeCards').innerHTML = Object.keys(ROUTE_STYLE).map((k) => `<div class="rcard ${k === S.sel ? 'sel' : ''}" data-k="${k}" style="--c:#${ROUTE_STYLE[k].color.toString(16).padStart(6, '0')}">
+  $('routeCards').innerHTML = Object.keys(ROUTE_STYLE).filter((k) => k !== 'replan' || S.routes.replan).map((k) => `<div class="rcard ${k === S.sel ? 'sel' : ''}" data-k="${k}" style="--c:#${ROUTE_STYLE[k].color.toString(16).padStart(6, '0')}">
     <div class="rname">${ROUTE_STYLE[k].name}</div>${routeBlurb(k)}</div>`).join('');
-  $('routeCards').querySelectorAll('.rcard').forEach((c) => c.onclick = () => { if (!S.routes[c.dataset.k]) return; S.sel = c.dataset.k; buildRouteMeshes(); renderTable(); drawTrack(); update(0); });
+  $('routeCards').querySelectorAll('.rcard').forEach((c) => c.onclick = () => { if (!S.routes[c.dataset.k]) return; S.sel = c.dataset.k; if (S.sel !== 'replan') placeRover(); buildRouteMeshes(); renderTable(); drawTrack(); update(0); });
 }
 
 function renderTable() {
   renderCards();
-  const keys = Object.keys(ROUTE_STYLE);
+  const keys = Object.keys(ROUTE_STYLE).filter((k) => k !== 'replan' || S.routes.replan);
   const R = S.routes;
   const budget = CONFIG.evaLimitH.value * 3600;
   const head = keys.map((k) => `<th class="route ${k === S.sel ? 'sel' : ''}" data-k="${k}" style="color:#${ROUTE_STYLE[k].color.toString(16)}">${ROUTE_STYLE[k].name}</th>`).join('');
@@ -421,7 +431,173 @@ function renderTable() {
 
 const profile = new ProfileStrip($('profile'), (t) => { S.tS = t; update(0); });
 function drawTrack() {
-  profile.setRoute(S.routes[S.sel], { dust: env.scenarios.dust, sep: env.scenarios.sep, budgetS: CONFIG.evaLimitH.value * 3600 });
+  profile.setRoute(S.routes[S.sel], { dust: env.scenarios.dust, warnS: front ? front.detections()[0].t : undefined, sep: env.scenarios.sep, budgetS: CONFIG.evaLimitH.value * 3600 });
+}
+
+// ---------- mid-EVA re-planning + dust-front early warning ----------
+const PACE = { dustNew: 0.7, dustTracks: 0.85 }; // Assumption: slower in low visibility, less so on known tracks
+let front = null; // DustFront while the dust scenario is on
+const dustWall = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0xa8714b, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
+dustWall.rotation.y = Math.PI / 2; dustWall.visible = false; scene.add(dustWall);
+const stationGroup = new THREE.Group(); scene.add(stationGroup);
+const roverGroup = new THREE.Group(); scene.add(roverGroup);
+
+function integrate(fn, t0, t1) { let acc = 0; for (let t = t0; t < t1; t += 60) acc += fn(t) * Math.min(60, t1 - t); return acc; }
+
+/** Pressurized rover staged at the middle of the outbound leg (Assumption): a safe haven within reach. */
+function placeRover() {
+  roverGroup.clear(); S.roverIdx = null;
+  const r = S.routes[S.sel === 'replan' ? 'gentlest' : S.sel] || S.routes.gentlest; if (!r) return;
+  const out = r.samples.filter((s) => s.phase === 'out'); if (out.length < 10) return;
+  S.roverIdx = out[Math.floor(out.length / 2)].i;
+  const p = idxWorld(S.roverIdx);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(6, 3, 3.4), new THREE.MeshStandardMaterial({ color: 0xe9e6df, roughness: 0.6 }));
+  body.position.y = 2.6;
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.6, 3.2), new THREE.MeshStandardMaterial({ color: 0x9fd3ff, emissive: 0x3a6f99, emissiveIntensity: 0.5 }));
+  cab.position.set(2.4, 3.4, 0);
+  const g = new THREE.Group(); g.add(body, cab);
+  for (const [x, z] of [[-2, -1.8], [2, -1.8], [-2, 1.8], [2, 1.8]]) { const w = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.6, 14), new THREE.MeshStandardMaterial({ color: 0x2a2f36 })); w.rotation.x = Math.PI / 2; w.position.set(x, 0.9, z); g.add(w); }
+  g.scale.setScalar(S.fp ? 1 : HAB_SCALE); g.position.copy(p); roverGroup.add(g);
+  const l = labelSprite('Shelter rover (assumed)', '#9fd3ff'); l.position.copy(p).add(new THREE.Vector3(0, 70, 0)); roverGroup.add(l);
+}
+
+const DIRWORD = { N: 'north', E: 'east', S: 'south', W: 'west' };
+const stationName = (s) => (s.id === 'HAB' ? 'habitat met station' : `station ${s.id}, ${s.km} km ${DIRWORD[s.dir]}`);
+
+function setupFront() {
+  stationGroup.clear(); front = null; dustWall.visible = false;
+  const d = env.scenarios.dust; delete d.crewStartS;
+  if (!d.on || !S.t) return;
+  const h = idxXY(S.habitatIdx);
+  front = new DustFront(h.x, h.y, d.startS, $('scNet').value);
+  front.stations.forEach((s) => {
+    const inside = s.x >= 0 && s.x <= W() && s.y >= 0 && s.y <= H();
+    const x = Math.max(0, Math.min(W(), s.x)), y = Math.max(0, Math.min(H(), s.y));
+    const pos = toWorld(x, y, zAtXY(x, y));
+    if (inside) {
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 60, 6), new THREE.MeshStandardMaterial({ color: 0xb9bec4 })); mast.position.copy(pos).add(new THREE.Vector3(0, 30, 0)); stationGroup.add(mast);
+    }
+    s._pos = pos; s._inside = inside; s._lit = false;
+    s._label = labelSprite(`${inside ? '' : '→ '}${s.id === 'HAB' ? 'Habitat met station' : `Met station ${s.id}, ${s.km} km`}`, '#9fd3ff');
+    s._label.position.copy(pos).add(new THREE.Vector3(0, 90, 0)); stationGroup.add(s._label);
+  });
+}
+
+function updateFront(tS, crewX) {
+  if (!front) { dustWall.visible = false; return null; }
+  const fx = front.x(tS);
+  dustWall.visible = fx > -4000 && fx < W() + 4000;
+  dustWall.scale.set(H() + 6000, 900, 1);
+  dustWall.position.set(fx - W() / 2, 450, 0);
+  env.scenarios.dust.crewStartS = front.arrivalAt(crewX);
+  const K = front.knowledge(tS, crewX);
+  for (const s of front.stations) {
+    const lit = K ? K.det.some((d) => d.id === s.id) : false;
+    if (lit !== s._lit) {
+      stationGroup.remove(s._label);
+      s._label = labelSprite(`${lit ? 'Dust detected: ' : 'Met station '}${s.id}${s.km ? `, ${s.km} km` : ''}`, lit ? '#ff8a7a' : '#9fd3ff');
+      s._label.position.copy(s._pos).add(new THREE.Vector3(0, 90, 0)); stationGroup.add(s._label); s._lit = lit;
+    }
+  }
+  return K;
+}
+
+function replanOptions(kind) {
+  const t = S.t, r = S.routes[S.sel], tS = S.tS, p = sampleAt(r, tS), cur = p.i;
+  const walked = walkedCells(r, tS); if (walked[walked.length - 1] !== cur) walked.push(cur);
+  const dust = kind === 'dust', opts = [];
+  const finish = (key, name, why, route, shelterIdx, extra = {}) => {
+    if (!route) return;
+    const end = route.durationS, fromNow = end - tS;
+    const sx = shelterIdx !== null ? idxXY(shelterIdx).x : null;
+    const frontAt = dust && front && sx !== null ? front.arrivalAt(sx) : null;
+    const slack = frontAt !== null ? frontAt - end : null;
+    const doseUGy = integrate((x) => env.doseRate(x).v / 86400, tS, end);
+    const distNow = Math.max(0, route.distanceM - walkedDistance(r, tS));
+    opts.push({ key, name, why, route, fromNow, end, slack, stormS: slack !== null ? Math.max(0, -slack) : null, doseUGy, distNow, maxSlope: route.maxSlopeDeg, ...extra });
+  };
+  const direct = astar(t, cur, S.habitatIdx, dust ? 'shortest' : 'shortest', CONFIG.maxSlopeDeg.value);
+  if (direct && direct.length > 1) finish('direct', 'Head straight home', dust ? 'Fastest path to the habitat. New ground if visibility drops on the way.' : 'Fastest path to shelter in the habitat.',
+    spliceRoute(t, r, tS, [{ cells: direct, phase: 'return' }]), S.habitatIdx);
+  if (walked.length > 1) finish('retrace', 'Retrace your tracks home', 'Walk back over ground you have already crossed. Easier to follow if the front catches you.',
+    spliceRoute(t, r, tS, [{ cells: walked.slice().reverse(), phase: 'return', speedMul: dust ? PACE.dustTracks : 1 }]), S.habitatIdx);
+  if (S.roverIdx !== null && S.roverIdx !== undefined) {
+    const toRover = astar(t, cur, S.roverIdx, 'shortest', CONFIG.maxSlopeDeg.value);
+    if (toRover && toRover.length > 1) finish('rover', 'Shelter in the staged rover', 'Get into the pressurized rover parked on the route and wait the storm out.',
+      spliceRoute(t, r, tS, [{ cells: toRover, phase: 'return', stopAfterMin: 1, stopTag: 'rover' }]), S.roverIdx);
+  }
+  const remaining = r.durationS - tS, est = dust ? remaining / PACE.dustNew : remaining;
+  finish('continue', 'Continue the plan', 'Keep going to the destination and stops as planned.', { ...r, durationS: tS + est }, S.habitatIdx, { projected: true });
+  const moves = opts.filter((o) => o.key !== 'continue');
+  let rec;
+  if (dust) rec = moves.filter((o) => o.slack >= 0).sort((a, b) => a.fromNow - b.fromNow)[0] || moves.sort((a, b) => a.stormS - b.stormS)[0];
+  else rec = moves.sort((a, b) => a.fromNow - b.fromNow)[0];
+  if (rec) rec.recommended = true;
+  return opts;
+}
+
+function walkedDistance(r, tS) {
+  let d = 0; const s = r.samples;
+  for (let k = 1; k < s.length && s[k].t <= tS; k++) d += Math.hypot(s[k].x - s[k - 1].x, s[k].y - s[k - 1].y, s[k].z - s[k - 1].z);
+  return d;
+}
+
+function openReplan(kind) {
+  S.playing = false; $('play').textContent = '▶'; $('play').setAttribute('aria-label', 'Play');
+  S.handled[kind] = true;
+  const r = S.routes[S.sel], p = sampleAt(r, S.tS);
+  const opts = replanOptions(kind), budget = CONFIG.evaLimitH.value * 3600, c = CASES[kind];
+  const K = kind === 'dust' && front ? front.knowledge(S.tS, p.x) : null;
+  const optHTML = opts.map((o, i) => {
+    const m = budget - o.end;
+    const verdict = o.slack === null ? '' : o.slack >= 0 ? `<p class="ok">Inside ${fmtMin(o.slack)} before the front</p>` : `<p class="bad">Front arrives ${fmtMin(-o.slack)} before you reach shelter</p>`;
+    return `<div class="rp-opt ${o.recommended ? 'rec' : ''}">
+      <div class="rp-top"><b>${o.name}</b>${o.recommended ? '<span class="rp-badge">Recommended</span>' : ''}</div>
+      <p>${o.why}</p>${o.key === 'continue' ? '' : verdict}
+      <dl class="rp-m">
+        <div><dt>${o.key === 'rover' ? 'In the rover in' : 'Home in'}</dt><dd>${fmtHM(o.fromNow)}${o.projected ? ' (est.)' : ''}</dd></div>
+        <div><dt>Distance</dt><dd>${(o.distNow / 1000).toFixed(1)} km</dd></div>
+        <div><dt>Max slope</dt><dd>${o.maxSlope.toFixed(0)}°</dd></div>
+        <div><dt>${kind === 'dust' ? 'Exposed to storm' : 'Extra dose'}</dt><dd>${kind === 'dust' ? (o.key === 'continue' ? 'most of it' : fmtMin(o.stormS || 0)) : o.doseUGy.toFixed(1) + ' µGy'}</dd></div>
+        <div><dt>EVA margin</dt><dd class="${m < 0 ? 'bad' : ''}">${m < 0 ? '−' + fmtHM(-m) : fmtHM(m)}</dd></div>
+      </dl>
+      <button class="${o.recommended ? 'go' : 'ghost'}" data-i="${i}">${o.key === 'continue' ? 'Keep the plan' : 'Choose this'}</button>
+    </div>`;
+  }).join('');
+  const first = K?.det[0];
+  const head = kind === 'dust'
+    ? `<h2 id="rpTitle">Dust front detected ${first ? `at ${stationName(first)}` : ''}. ${K && K.passed ? 'It is already over you.' : `Reaches you in about ${K ? fmtMin(K.etaS) : '?'}.`}</h2>
+       <p>Network: ${front.network.name} <i class="pv a">proposed</i>. Moving east at ${K ? K.speed.toFixed(0) : FRONT.speedMs} m/s <i class="pv ${K && K.speedLabel === 'measured' ? 'o' : 'a'}">${K ? K.speedLabel : 'assumed'}</i>, the speed measured for the January 2022 storm at Jezero. Pace drops to ${Math.round(PACE.dustTracks * 100)}% on your own tracks once the dust arrives <i class="pv a">assumed</i>. Earth is 4 to 24 light-minutes away, so this call is yours.</p>`
+    : `<h2 id="rpTitle">Solar particle event at T+${fmtHM(S.tS)}. Get to shelter.</h2>
+       <p>Dose rate follows the May 2024 RAD event profile <i class="pv s">scenario</i>. Shielding by terrain is not modelled. Earth is 4 to 24 light-minutes away, so this call is yours.</p>`;
+  const el = $('replan');
+  el.innerHTML = `<div class="rp-card" role="alertdialog" aria-modal="true" aria-labelledby="rpTitle">
+    <div class="rp-head">${head}</div>
+    <div class="rp-body">
+      <div class="rp-opts">${optHTML}</div>
+      <aside class="rp-why">
+        <h3>${c.title}</h3>
+        <ul>${c.points.map((x) => `<li>${x}</li>`).join('')}</ul>
+        <p class="lesson">${c.lesson}</p>
+        <p class="srcs">Sources: ${c.sources.map(([n, u]) => `<a href="${u}" target="_blank" rel="noopener">${n}</a>`).join('; ')}. Full notes in docs/RESEARCH.md.</p>
+      </aside>
+    </div>
+  </div>`;
+  el.hidden = false;
+  el.querySelectorAll('button[data-i]').forEach((b) => b.onclick = () => applyReplan(kind, opts[+b.dataset.i]));
+  (el.querySelector('.rp-opt.rec button') || el.querySelector('button'))?.focus();
+}
+
+function closeReplan() { const el = $('replan'); if (el) { el.hidden = true; el.innerHTML = ''; } }
+
+function applyReplan(kind, o) {
+  closeReplan();
+  if (o.key !== 'continue') {
+    S.routes.replan = o.route; S.replanInfo = { kind, at: S.tS, name: o.name }; S.sel = 'replan';
+    buildRouteMeshes(); renderTable(); drawTrack();
+  }
+  update(0);
+  S.playing = true; $('play').textContent = '❚❚'; $('play').setAttribute('aria-label', 'Pause');
 }
 
 // ---------- simulation update ----------
@@ -451,6 +627,7 @@ function update(dtReal) {
     if (q.heading !== undefined && q.phase !== 'stop') fig.rotation.y = -q.heading + Math.PI / 2;
     animate(fig, k ? classifyState({ grade: q.grade, phase: q.phase, tau: tau.v, doseRate: dr.v, radWarn: Infinity }) : state, dtReal, walking, performance.now() / 1000);
   });
+  const K = updateFront(S.tS, p.x);
   updateDust(dust, crew[0].position, tau.v, Wd.v, dtReal);
   crew[0].visible = !S.fp;
   dust.material.size = S.fp ? 0.35 : 4;
@@ -484,8 +661,10 @@ function update(dtReal) {
   if (state.flags.includes('radiation')) hud.push(`<div class="hudmsg rad">☢ Radiation ${Math.round(dr.v)} µGy/day, above the ${CONFIG.radWarnUGyPerDay.value} warning level. Head back to the habitat.</div>`);
   if (state.flags.includes('dust')) hud.push(`<div class="hudmsg dust">Dust storm, τ ${tau.v.toFixed(1)}. Visibility down; protect seals, optics and solar panels.</div>`);
   if (S.tS > CONFIG.evaLimitH.value * 3600) hud.push('<div class="hudmsg margin">Past the EVA time budget</div>');
-  if (S.fp) hud.push('<div class="hudmsg fp">First person. Drag to look around, press F to leave. Relief ×' + S.exag + '.</div>');
+  if (K && !K.passed) hud.push(`<div class="hudmsg dust">Dust front about ${Math.round((p.x - K.frontXEst) / 1000)} km west, moving east at ${K.speed.toFixed(0)} m/s. Reaches you in about ${fmtMin(K.etaS)}.</div>`);
+  if (S.sel === 'replan' && S.replanInfo) hud.push(`<div class="hudmsg fp">Re-planned at T+${fmtHM(S.replanInfo.at)}: ${S.replanInfo.name.toLowerCase()}</div>`);
   const hudHTML = hud.join(''); if (hudHTML !== lastHud) { $('hud').innerHTML = hudHTML; lastHud = hudHTML; }
+  if (S.fp) updateVisor(r, p, { T, P, Wd, tau, dr, cum, K });
 
   // conditions tiles
   const tile = (k, v, unit, x, extra = '', cls = '') => `<div class="tile ${cls}" title="${x.src}"><div class="k"><span>${k}</span>${chip(x.label)}</div><div class="v">${v}<small>${unit}</small></div><div class="src">${[x.short, extra].filter(Boolean).join('. ')}</div></div>`;
@@ -514,8 +693,57 @@ function update(dtReal) {
   sun.intensity = 0.6 + 1.8 * beam.v + 0.4; hemi.intensity = 0.55 + 0.5 * (1 - beam.v);
 }
 
+// ---------- helmet visor (first person) ----------
+function nextStop(r, p) {
+  const sm = r.samples;
+  for (let j = Math.max(1, p.k); j < sm.length; j++) {
+    const s = sm[j];
+    if (s.phase !== 'stop' || s.t <= S.tS) continue;
+    const arriveT = sm[j - 1].t, here = S.tS >= arriveT;
+    let dist = 0;
+    if (!here) { let a = p; for (let i = p.k + 1; i < j; i++) { dist += Math.hypot(sm[i].x - a.x, sm[i].y - a.y); a = sm[i]; } }
+    const site = S.sites.sites.find((x) => x.id === s.stopTag);
+    const name = s.stopTag === 'rover' ? 'ROVER' : site ? site.id : 'DEST';
+    return { s, name, text: here ? `sampling, ${fmtMin(s.t - S.tS)} left` : `${(dist / 1000).toFixed(2)} km · ${fmtMin(arriveT - S.tS)}` };
+  }
+  return null;
+}
+
+function updateVisor(r, p, e) {
+  const pv = (lbl) => chip(lbl);
+  const eye = (x, y, z, up = 2) => toWorld(x, y, z).add(new THREE.Vector3(0, up, 0));
+  const ns = nextStop(r, p);
+  const h = idxXY(S.habitatIdx), hz = S.t.z[S.habitatIdx];
+  const homeM = Math.hypot(h.x - p.x, h.y - p.y);
+  const evaLeft = CONFIG.evaLimitH.value * 3600 - S.tS, planLeft = r.durationS - S.tS;
+  const mate = crew[1].position, myW = toWorld(p.x, p.y, p.z), mateM = Math.hypot(mate.x - myW.x, mate.z - myW.z);
+  const g = p.grade * 100, word = p.phase === 'stop' ? 'Stopped' : g > 3 ? 'Uphill' : g < -3 ? 'Downhill' : 'Level';
+  const left = [
+    { k: 'EVA left', v: evaLeft >= 0 ? fmtHM(evaLeft) : '−' + fmtHM(-evaLeft), u: '', pv: pv(LABEL.ASSUMP), warn: evaLeft < planLeft || evaLeft < 1800 },
+    { k: 'Dose rate', v: Math.round(e.dr.v), u: ' µGy/d', pv: pv(e.dr.label), warn: e.dr.v > CONFIG.radWarnUGyPerDay.value },
+    { k: 'EVA dose', v: e.cum.v.toFixed(1), u: ' µGy', pv: pv(e.cum.label) },
+    { k: 'Dust τ', v: e.tau.v.toFixed(2), u: '', pv: pv(e.tau.label), warn: e.tau.v > 1.5 },
+  ];
+  const right = [
+    { k: 'Air', v: e.T.v.toFixed(0), u: ' °C', pv: pv(e.T.label) },
+    { k: 'Pressure', v: e.P.v.toFixed(0), u: ' Pa', pv: pv(e.P.label) },
+    { k: 'Wind', v: e.Wd.v.toFixed(1), u: ' m/s', pv: pv(e.Wd.label) },
+  ];
+  if (e.K && !e.K.passed) right.unshift({ k: 'Dust front', v: fmtMin(e.K.etaS), u: '', pv: pv(LABEL.SCENARIO), warn: true });
+  const rect = viewport.getBoundingClientRect();
+  visor.update({
+    hdg: yawToHeading(S.fpYaw + S.fpYawOff), camera, w: rect.width, h: rect.height, exag: S.exag,
+    left, right,
+    next: ns && { name: ns.name, brg: bearing(ns.s.x - p.x, ns.s.y - p.y), world: eye(ns.s.x, ns.s.y, ns.s.z, 3), text: ns.text },
+    home: homeM > 25 ? { brg: bearing(h.x - p.x, h.y - p.y), world: eye(h.x, h.y, hz, 6), text: `${(homeM / 1000).toFixed(2)} km` } : null,
+    mate: mateM > 1 ? { brg: bearing(mate.x - myW.x, mate.z - myW.z), world: mate.clone().add(new THREE.Vector3(0, 2.6, 0)), text: `${Math.round(mateM)} m` } : null,
+    grade: { pct: g, slope: p.slope, word },
+  });
+}
+
 let previewKey = null;
 function showPreview(tag) {
+  if (tag === 'rover') tag = null;
   if (tag === previewKey) return;
   if (!tag && previewKey && /^(place|site|habitat)/.test(previewKey)) return; // keep a card the user opened
   previewKey = tag;
@@ -570,13 +798,15 @@ function wire() {
   const sc = () => {
     env.scenarios.dust = { on: $('scDust').checked, startS: +$('scDustT').value * 3600 };
     env.scenarios.sep = { on: $('scSep').checked, startS: +$('scSepT').value * 3600 };
+    S.handled = { dust: false, sep: false }; setupFront();
     renderTable(); drawTrack(); update(0);
   };
-  ['scDust', 'scDustT', 'scSep', 'scSepT'].forEach((id) => $(id).onchange = sc);
+  ['scDust', 'scDustT', 'scSep', 'scSepT', 'scNet'].forEach((id) => $(id).onchange = sc);
   const setFP = (on) => {
     if (on && S.view === 'globe') return;
     S.fp = on; $('fpBtn').classList.toggle('on', on); controls.enabled = !on;
-    routeGroup.visible = !on; crew.forEach((c) => c.scale.setScalar(on ? 1 : SCALE)); placeHabitat();
+    visor.show(on); document.body.classList.toggle('fp-mode', on); $('fpBtn').setAttribute('aria-pressed', on);
+    routeGroup.visible = !on; crew.forEach((c) => c.scale.setScalar(on ? 1 : SCALE)); placeHabitat(); placeRover();
     camera.near = on ? 0.3 : 5; camera.fov = on ? 70 : 50; camera.updateProjectionMatrix();
     S.fpYawOff = 0; S.fpPitch = -0.08;
     if (!on) { const c = crew[0].position; controls.target.copy(c); camera.position.copy(c).add(new THREE.Vector3(-260, 240, 420)); }
@@ -628,7 +858,13 @@ function loop(now) {
   const dt = Math.min(0.1, (now - prev) / 1000); prev = now;
   const r = S.routes[S.sel];
   if (S.playing && r) {
+    const before = S.tS;
     S.tS = Math.min(r.durationS, S.tS + dt * +$('speed').value);
+    for (const kind of ['dust', 'sep']) {
+      const sc = env.scenarios[kind];
+      const at = Math.max(1, kind === 'dust' ? (front ? front.detections()[0].t : Infinity) : sc.startS);
+      if (sc.on && !S.handled[kind] && before < at && S.tS >= at && S.sel !== 'replan') { S.tS = at; openReplan(kind); break; }
+    }
     if (S.tS >= r.durationS) { S.playing = false; $('play').textContent = '▶'; }
   }
   if (S.view === 'globe') {

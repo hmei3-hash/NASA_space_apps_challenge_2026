@@ -114,7 +114,7 @@ export function buildProfile(t, legs) {
         if (run > 0) {
           const dz = p.z - q.z, grade = dz / run;
           const seg = Math.hypot(run, dz);
-          const dt = (seg / 1000 / speedKmh(grade)) * 3600;
+          const dt = (seg / 1000 / (speedKmh(grade) * (leg.speedMul ?? 1))) * 3600;
           time += dt; dist += seg; slopeAcc += p.slope * seg;
           if (dz > 0) gain += dz; else loss -= dz;
           maxSlope = Math.max(maxSlope, p.slope);
@@ -232,4 +232,36 @@ export function sampleAt(prof, tS) {
     slope: b.slope, grade: b.grade, phase: b.phase, stopTag: b.stopTag, i: b.i, k: hi,
     heading: Math.atan2(b.y - a.y, b.x - a.x),
   };
+}
+
+
+/** Grid cells walked on a profile up to time tS (consecutive duplicates removed). */
+export function walkedCells(prof, tS) {
+  const out = [];
+  for (const s of prof.samples) { if (s.t > tS) break; if (out[out.length - 1] !== s.i) out.push(s.i); }
+  return out;
+}
+
+/** Recompute summary metrics for an arbitrary sample list. */
+export function summarize(samples) {
+  let dist = 0, gain = 0, loss = 0, maxSlope = 0, acc = 0;
+  for (let k = 1; k < samples.length; k++) {
+    const a = samples[k - 1], b = samples[k];
+    const run = Math.hypot(b.x - a.x, b.y - a.y); if (!run) continue;
+    const dz = b.z - a.z, seg = Math.hypot(run, dz);
+    dist += seg; acc += b.slope * seg; maxSlope = Math.max(maxSlope, b.slope);
+    if (dz > 0) gain += dz; else loss -= dz;
+  }
+  return { distanceM: dist, gainM: gain, lossM: loss, maxSlopeDeg: maxSlope, meanSlopeDeg: dist ? acc / dist : 0, durationS: samples.length ? samples[samples.length - 1].t : 0 };
+}
+
+/** Keep what was walked up to tS, then append new legs starting at the current cell. */
+export function spliceRoute(t, orig, tS, legs) {
+  const head = orig.samples.filter((s) => s.t <= tS);
+  if (!legs.length || !legs[0].cells.length) return null;
+  const tail = buildProfile(t, legs);
+  const tailS = tail.samples.map((s) => ({ ...s, t: s.t + tS }));
+  const samples = head.concat(tailS.slice(head.length && head[head.length - 1].i === tailS[0].i ? 1 : 0));
+  const visited = (orig.visited || []).filter((id) => orig.samples.some((s) => s.stopTag === id && s.t <= tS));
+  return { samples, visited, ...summarize(samples) };
 }

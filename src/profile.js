@@ -102,7 +102,8 @@ export class ProfileStrip {
       g.fillStyle = color; g.font = '11px "Barlow Condensed", Barlow, sans-serif'; g.textBaseline = 'bottom'; g.fillText(text, x + 3, P.t - 8);
     };
     const o = this.opts || {};
-    if (o.dust?.on) mark(o.dust.startS, '#f2c14e', 'dust storm');
+    if (o.warnS !== undefined && o.dust?.on) mark(o.warnS, '#f2c14e', 'dust warning', true);
+    if (o.dust?.on) mark(o.dust.startS, '#c98a4a', 'front at habitat');
     if (o.sep?.on) mark(o.sep.startS, '#ff5a4e', 'solar particle event');
     if (o.budgetS < D) mark(o.budgetS, '#b48cf2', 'EVA limit', true);
 
@@ -120,7 +121,7 @@ export class ProfileStrip {
     this.c.setAttribute('aria-valuetext', `${hm(tS)} into the EVA, ${gait === 'sampling' ? 'sampling' : GAIT_LABEL[gait].toLowerCase()}, elevation ${Math.round(cz)} metres`);
     // state bubble
     const pct = Math.round(here.grade * 100);
-    const label = gait === 'sampling' ? `Sampling${here.stopTag ? ' at ' + here.stopTag : ''}` : `${GAIT_LABEL[gait]}${gait === 'normal' ? '' : ` ${pct > 0 ? '+' : ''}${pct}% grade`}`;
+    const label = here.stopTag === 'rover' ? 'Sheltering in the rover' : gait === 'sampling' ? `Sampling${here.stopTag ? ' at ' + here.stopTag : ''}` : `${GAIT_LABEL[gait]}${gait === 'normal' ? '' : ` ${pct > 0 ? '+' : ''}${pct}% grade`}`;
     g.font = '600 12px Barlow, sans-serif'; const tw = g.measureText(label).width;
     let bx = cx + 18; if (bx + tw + 14 > w - 2) bx = cx - 18 - tw - 14;
     const by = Math.max(2, cy - 58);

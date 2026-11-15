@@ -35,4 +35,5 @@ export const ROUTE_STYLE = {
   shortest: { name: 'Shortest', color: 0x4fc3f7, desc: 'min distance subject to slope limit' },
   gentlest: { name: 'Gentlest', color: 0x81c784, desc: 'penalizes slope quadratically' },
   science: { name: 'Science', color: 0xffb74d, desc: 'visits science sites that fit the EVA budget' },
+  replan: { name: 'Re-planned', color: 0xff5a4e, desc: 'changed mid-EVA after a hazard' },
 };
