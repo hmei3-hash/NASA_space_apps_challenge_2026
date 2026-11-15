@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Marswalk — Jezero EVA planner</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">
+      <h1 class="word">Marswalk</h1>
+      <span class="site">Jezero crater EVA planner</span>
+    </div>
+    <div id="dataBadge" class="badge">Loading terrain…</div>
+    <div class="controls">
+      <label class="field" title="Steepest ground the crew may cross">Slope limit <input id="maxSlope" type="number" min="5" max="30" step="1" /><span>°</span></label>
+      <label class="field" title="Time budget for one EVA, including the walk back">EVA budget <input id="evaLimit" type="number" min="2" max="10" step="0.5" /><span>h</span></label>
+      <label class="field" title="Vertical exaggeration of the terrain">Relief <input id="exag" type="range" min="1" max="5" step="0.5" /></label>
+      <details class="viewmenu">
+        <summary>View</summary>
+        <div class="menu">
+          <label class="toggle"><input id="slopeOverlay" type="checkbox" /><span>Highlight steep ground</span></label>
+          <label class="toggle"><input id="showTrav" type="checkbox" checked /><span>Show Perseverance path</span></label>
+          <label class="toggle"><input id="follow" type="checkbox" checked /><span>Camera follows crew</span></label>
+        </div>
+      </details>
+      <button id="demoBtn" class="pillbtn demo" title="Play a 30-second guided demo (Esc to stop)">▶ Demo</button>
+      <button id="globeBtn" class="pillbtn" aria-pressed="true" title="Whole-planet view">Globe</button>
+      <button id="fpBtn" title="First-person view (F)">First person</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="viewport">
+      <div id="hud" role="alert"></div>
+      <div id="hint">Click the ground to set a destination. Drag to orbit, scroll to zoom.</div>
+      <div id="preview" class="hidden"></div>
+      <div id="globeCard" aria-live="polite"></div>
+      <div id="demoCap" hidden aria-live="polite"><p></p><div class="dc-bar"><i></i></div></div>
+      <details id="planetPanel" open></details>
+      <div id="replan" hidden></div>
+      <div id="fade" aria-hidden="true"></div>
+    </div>
+
+    <aside id="side">
+      <div class="tabs" role="tablist" aria-label="Console">
+        <button role="tab" id="t-plan" data-tab="plan" aria-controls="tab-plan" aria-selected="true">Plan</button>
+        <button role="tab" id="t-live" data-tab="live" aria-controls="tab-live" aria-selected="false" tabindex="-1">Live conditions</button>
+        <button role="tab" id="t-places" data-tab="places" aria-controls="tab-places" aria-selected="false" tabindex="-1">Places</button>
+      </div>
+      <div role="tabpanel" id="tab-plan" aria-labelledby="t-plan">
+      <section>
+        <h2>Route <small>round trip from the habitat</small></h2>
+        <div id="routeCards"></div>
+        <button id="detailsBtn" class="linkbtn">Show detailed comparison</button>
+        <div id="routeTable" class="hidden"></div>
+        <p id="routeNote" class="note hidden"></p>
+      </section>
+      <section>
+        <h2>Scenario events <small>injected, not predicted</small></h2>
+        <p id="planetWatch" class="note" aria-live="polite"></p>
+        <label class="scen"><input id="scDust" type="checkbox" /> Dust front reaches habitat at T+<input id="scDustT" aria-label="Dust front arrival at the habitat, hours after EVA start" type="number" value="2.5" min="0" max="10" step="0.5" /> h</label>
+        <label class="scen netsel">Warning network <select id="scNet" aria-label="Surface weather station network">
+          <option value="ez100" selected>EZ ring, 4 stations at 100 km</option>
+          <option value="ring30">Compact ring, 4 at 30 km</option>
+          <option value="habitat">Habitat station only</option>
+        </select></label>
+        <label class="scen"><input id="scTeam" type="checkbox" /> Second EVA team <input id="scTeamKm" aria-label="Distance of the second team west of the habitat, km" type="number" value="10" min="1" max="60" step="1" /> km west shares what it sees</label>
+        <details class="simsrc">
+          <summary>Where the dust-front numbers come from</summary>
+          <ul>
+            <li><i class="pv o">measured</i> Front speed 25 m/s: the January 2022 storm front at Jezero, from Perseverance data (Sánchez-Lavega et al. 2025). Fronts in the 2018 storm ran 5 to 40 m/s.</li>
+            <li><i class="pv a">assumed</i> A straight front moving east, a 90 s confirmation delay, and the station layout. No such network exists on Mars today.</li>
+            <li><i class="pv m">model</i> Warning time = distance to the first sensor the front crosses ÷ front speed − confirmation delay. A second team upwind counts as a sensor.</li>
+            <li><i class="pv s">scenario</i> You choose when the front arrives. It is not a forecast.</li>
+          </ul>
+          <p>Full evidence and links: <code>docs/RESEARCH.md</code>. Planet-scale spread: open the Globe.</p>
+        </details>
+        <label class="scen"><input id="scSep" type="checkbox" /> Solar particle event at T+<input id="scSepT" aria-label="Solar particle event start, hours after EVA start" type="number" value="1.5" min="0" max="10" step="0.5" /> h</label>
+      </section>
+      <section class="legend">
+        <h2>Where each number comes from</h2>
+        <dl class="pvlist">
+          <dt><i class="pv o">measured</i></dt><dd>Instrument data (DEM, RAD, rover positions)</dd>
+          <dt><i class="pv r">replay</i></dt><dd>A measured series played back in time (MEDA)</dd>
+          <dt><i class="pv m">model</i></dt><dd>Computed from a simple model</dd>
+          <dt><i class="pv a">assumed</i></dt><dd>A parameter we chose</dd>
+          <dt><i class="pv s">scenario</i></dt><dd>An event we inject, not a forecast</dd>
+        </dl>
+      </section>
+      </div>
+      <div role="tabpanel" id="tab-live" aria-labelledby="t-live" hidden>
+      <section>
+        <h2>Conditions at the crew</h2>
+        <div id="envPanel"></div>
+      </section>
+      </div>
+      <div role="tabpanel" id="tab-places" aria-labelledby="t-places" hidden>
+      <section>
+        <h2>Science stops</h2>
+        <div id="siteList"></div>
+        <p class="note" id="clickInfo"></p>
+      </section>
+      <section>
+        <h2>Places in Jezero</h2>
+        <div id="resList"></div>
+      </section>
+      </div>
+    </aside>
+  </main>
+
+  <footer id="timeline">
+    <div class="transport">
+      <button id="play" aria-label="Play">▶</button>
+      <select id="speed" aria-label="Playback speed">
+        <option value="60">60×</option>
+        <option value="300" selected>300×</option>
+        <option value="1200">1200×</option>
+      </select>
+    </div>
+    <canvas id="profile" aria-label="Elevation profile of the selected route; click or drag to move through the EVA"></canvas>
+    <div id="clock"><div class="big">T+0:00</div><div class="small">09:00 LTST</div></div>
+  </footer>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

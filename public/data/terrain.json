@@ -1,0 +1,15 @@
+{
+ "width": 256,
+ "height": 256,
+ "cellSize": 20.0,
+ "heights": "heights.f32",
+ "ortho": "ortho.jpg",
+ "center": {
+  "lat": 18.455,
+  "lon": 77.42
+ },
+ "projection": "+proj=eqc +lat_ts=18.455 +lat_0=18.455 +lon_0=77.42 +x_0=0 +y_0=0 +R=3396190.0 +units=m +no_defs",
+ "demSource": "M20_JezeroCrater_CTXDEM_20m.tif",
+ "orthoSource": "data_raw\\JEZ_ctx_orthoMosaic_6m.tif",
+ "note": "Elevation is Observation-derived (stereo DTM). Study-area centre and size are Assumptions."
+}
