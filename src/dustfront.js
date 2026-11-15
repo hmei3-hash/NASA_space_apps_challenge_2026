@@ -5,6 +5,7 @@
 // - Exploration Zone radius ~100 km around the landing site (NASA EZ / field-station concept).
 // - Four-lander regional network (ESA Mars Weather Network study, Rajendran et al. 2025).
 // - A met package at the landing site measuring continuously, opacity every 10 min (MEPAG MHP SSG 2005).
+// Two-team broadcast: an optional second EVA team west of the habitat acts as a mobile station (Assumption).
 // What is assumed: where the four stations sit (on the EZ boundary at N/E/S/W), the confirmation
 // delay, and a straight north–south front moving east (the 2022 storm reactivated west of Jezero).
 
@@ -20,7 +21,7 @@ const BEARINGS = [['N', 0], ['E', 90], ['S', 180], ['W', 270]];
 
 export class DustFront {
   /** habitatX/Y in grid metres (x east, y south); arriveHabitatS = mission time the front reaches the habitat. */
-  constructor(habitatX, habitatY, arriveHabitatS, networkKey = 'ez100') {
+  constructor(habitatX, habitatY, arriveHabitatS, networkKey = 'ez100', teamKm = 0) {
     this.hx = habitatX; this.hy = habitatY; this.tHab = arriveHabitatS; this.v = FRONT.speedMs;
     const net = NETWORKS[networkKey] || NETWORKS.ez100;
     this.network = net;
@@ -29,6 +30,9 @@ export class DustFront {
       return { id: `EZ-${id}`, km: net.ringKm, dir: id, x: habitatX + net.ringKm * 1000 * Math.sin(r), y: habitatY - net.ringKm * 1000 * Math.cos(r) };
     }) : [];
     this.stations = [...ring, { id: 'HAB', km: 0, dir: '', x: habitatX, y: habitatY - 60 }];
+    // A second EVA team working west of the habitat (Assumption). It reports the front when the front reaches it,
+    // so for everyone east of it the team is one more upwind station.
+    if (teamKm > 0) this.stations.push({ id: 'TEAM-B', team: true, km: teamKm, dir: 'W', x: habitatX - teamKm * 1000, y: habitatY + 500 });
   }
   x(t) { return this.hx - this.v * (this.tHab - t); }
   arrivalAt(x) { return this.tHab + (x - this.hx) / this.v; }

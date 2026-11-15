@@ -36,6 +36,7 @@
       <div id="hint">Click the ground to set a destination. Drag to orbit, scroll to zoom.</div>
       <div id="preview" class="hidden"></div>
       <div id="globeCard" aria-live="polite"></div>
+      <details id="planetPanel" open></details>
       <div id="replan" hidden></div>
       <div id="fade" aria-hidden="true"></div>
     </div>
@@ -56,12 +57,24 @@
       </section>
       <section>
         <h2>Scenario events <small>injected, not predicted</small></h2>
+        <p id="planetWatch" class="note" aria-live="polite"></p>
         <label class="scen"><input id="scDust" type="checkbox" /> Dust front reaches habitat at T+<input id="scDustT" aria-label="Dust front arrival at the habitat, hours after EVA start" type="number" value="2.5" min="0" max="10" step="0.5" /> h</label>
         <label class="scen netsel">Warning network <select id="scNet" aria-label="Surface weather station network">
           <option value="ez100" selected>EZ ring, 4 stations at 100 km</option>
           <option value="ring30">Compact ring, 4 at 30 km</option>
           <option value="habitat">Habitat station only</option>
         </select></label>
+        <label class="scen"><input id="scTeam" type="checkbox" /> Second EVA team <input id="scTeamKm" aria-label="Distance of the second team west of the habitat, km" type="number" value="10" min="1" max="60" step="1" /> km west shares what it sees</label>
+        <details class="simsrc">
+          <summary>Where the dust-front numbers come from</summary>
+          <ul>
+            <li><i class="pv o">measured</i> Front speed 25 m/s: the January 2022 storm front at Jezero, from Perseverance data (Sánchez-Lavega et al. 2025). Fronts in the 2018 storm ran 5 to 40 m/s.</li>
+            <li><i class="pv a">assumed</i> A straight front moving east, a 90 s confirmation delay, and the station layout. No such network exists on Mars today.</li>
+            <li><i class="pv m">model</i> Warning time = distance to the first sensor the front crosses ÷ front speed − confirmation delay. A second team upwind counts as a sensor.</li>
+            <li><i class="pv s">scenario</i> You choose when the front arrives. It is not a forecast.</li>
+          </ul>
+          <p>Full evidence and links: <code>docs/RESEARCH.md</code>. Planet-scale spread: open the Globe.</p>
+        </details>
         <label class="scen"><input id="scSep" type="checkbox" /> Solar particle event at T+<input id="scSepT" aria-label="Solar particle event start, hours after EVA start" type="number" value="1.5" min="0" max="10" step="0.5" /> h</label>
       </section>
       <section class="legend">

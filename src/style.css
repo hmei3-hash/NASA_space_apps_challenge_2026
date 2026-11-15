@@ -194,33 +194,33 @@ button:active { transform: translateY(1px); }
 /* mid-EVA re-planning dialog */
 #replan { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(10, 12, 16, 0.55); backdrop-filter: blur(2px); padding: 20px; }
 #replan[hidden] { display: none; }
-.rp-card { width: min(980px, 100%); max-height: 100%; overflow-y: auto; background: var(--basalt); border: 1px solid var(--hazard); border-radius: var(--r-md); box-shadow: 0 20px 60px rgba(0,0,0,.5); }
-.rp-head { padding: 16px 20px 12px; border-bottom: 1px solid var(--line); }
-.rp-head h2 { margin: 0 0 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 26px; color: #ffb4ad; }
-.rp-head p { margin: 0; color: var(--muted); font-size: 13.5px; }
-.rp-body { display: grid; grid-template-columns: 1fr 300px; gap: 0; }
-.rp-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; padding: 16px 20px; }
-.rp-opt { display: flex; flex-direction: column; gap: 6px; padding: 12px; background: var(--basalt-2); border-radius: var(--r-md); border: 1px solid transparent; }
-.rp-opt.rec { border-color: var(--haze); }
-.rp-top { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
-.rp-badge { font-size: 11px; padding: 2px 7px; border-radius: 999px; background: var(--haze); color: var(--deep); font-weight: 700; }
-.rp-opt p { margin: 0; font-size: 13px; color: #cfc8bd; flex: 1; }
-.rp-m { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin: 4px 0; }
-.rp-m div { display: flex; flex-direction: column; }
-.rp-m dt { font-size: 11.5px; color: var(--muted); }
-.rp-m dd { margin: 0; font-family: 'Barlow Condensed', sans-serif; font-size: 19px; font-variant-numeric: tabular-nums; }
-.rp-m dd.bad { color: var(--hazard); }
-.rp-opt button { padding: 8px; border-radius: var(--r-sm); font-weight: 700; cursor: pointer; }
+.rp-card { width: min(860px, 100%); max-height: 100%; overflow-y: auto; background: var(--basalt); border: 1px solid var(--hazard); border-radius: var(--r-md); box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+.rp-head { padding: 16px 20px 10px; }
+.rp-head h2 { margin: 0; font-family: 'Barlow Condensed', sans-serif; font-size: 34px; line-height: 1.05; color: #ffb4ad; }
+.rp-head .rp-src { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+.rp-share { color: #8fe0a8; }
+.rp-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; padding: 6px 20px 16px; }
+.rp-opt { display: flex; flex-direction: column; gap: 4px; padding: 12px; background: var(--basalt-2); border-radius: var(--r-md); border: 1px solid transparent; }
+.rp-opt.rec { border-color: var(--haze); background: #2a2a24; }
+.rp-opt.weak { opacity: 0.75; }
+.rp-name { font-size: 15px; }
+.rp-v { margin: 2px 0 0; font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 700; line-height: 1.1; }
+.rp-v.ok { color: #8fe0a8; } .rp-v.bad { color: #ff8a7a; }
+.rp-plan { margin: 0; font-size: 13.5px; color: var(--ink); flex: 1; font-variant-numeric: tabular-nums; }
+.rp-fine { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rp-fine .bad { color: var(--hazard); }
+.rp-opt button { padding: 10px 8px; border-radius: var(--r-sm); font-weight: 700; font-size: 14px; cursor: pointer; }
 .rp-opt .go { border: none; background: var(--haze); color: var(--deep); }
 .rp-opt .ghost { background: none; border: 1px solid var(--line); color: var(--ink); }
-.rp-why { padding: 16px 18px; border-left: 1px solid var(--line); background: #171b22; font-size: 13px; }
-.rp-why h3 { margin: 0 0 8px; font-size: 14px; color: var(--dusk); }
+.rp-why { margin: 0 20px 16px; padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: #171b22; font-size: 13px; }
+.rp-why summary { cursor: pointer; color: var(--dusk); font-weight: 600; }
+.rp-why > p { color: #cfc8bd; }
+.rp-why h3 { margin: 12px 0 8px; font-size: 14px; color: var(--dusk); }
 .rp-why ul { margin: 0 0 10px; padding-left: 18px; color: #cfc8bd; }
 .rp-why li { margin-bottom: 6px; }
 .rp-why .lesson { color: var(--ink); font-weight: 600; margin: 0 0 10px; }
 .rp-why .srcs { color: var(--muted); font-size: 12px; margin: 0; }
 .rp-why a { color: var(--dusk); }
-@media (max-width: 900px) { .rp-body { grid-template-columns: 1fr; } .rp-why { border-left: none; border-top: 1px solid var(--line); } }
 
 .netsel select { background: var(--deep); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 3px 6px; color: var(--ink); }
 
@@ -303,3 +303,42 @@ button:active { transform: translateY(1px); }
   .v-grade .gw { font-size: 17px; }
 }
 @media (prefers-reduced-motion: reduce) { .v-wp { transition: none; } }
+
+/* ---------- planet-wide hazard sharing panel (globe view) ---------- */
+#planetPanel { display: none; position: absolute; top: 16px; right: 16px; width: 380px; overflow-x: hidden; max-width: calc(100% - 32px); max-height: calc(100% - 32px); overflow-y: auto; z-index: 4;
+  background: rgba(18, 21, 27, 0.86); border: 1px solid var(--line); border-radius: var(--r-md); backdrop-filter: blur(6px); font-size: 13.5px; }
+.globe-mode #planetPanel { display: block; }
+#planetPanel > summary { padding: 12px 16px; font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 700; color: var(--haze); cursor: pointer; }
+.pp-body { padding: 0 16px 14px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; overflow-wrap: anywhere; }
+.pp-lead { margin: 0; color: var(--muted); }
+.pp-body > label { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; }
+.pp-body select { background: var(--deep); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 5px 6px; font: inherit; min-width: 0; }
+.pp-time { display: grid; grid-template-columns: 36px 1fr 62px; gap: 10px; align-items: center; }
+.pp-time button { width: 36px; height: 36px; border-radius: 50%; border: none; background: var(--haze); color: var(--deep); font-size: 14px; cursor: pointer; }
+.pp-time input { width: 100%; accent-color: var(--haze); }
+.pp-time output { font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+#ppFacts { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 12.5px; }
+#ppTable, .pp-chk { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 12.5px; table-layout: fixed; }
+#ppTable th:first-child { width: 22%; }
+#ppTable th, #ppTable td, .pp-chk th, .pp-chk td { text-align: left; padding: 4px 6px 4px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+#ppTable th, .pp-chk th { color: var(--muted); font-weight: 500; font-size: 12px; }
+#ppTable tr.watch td:last-child { color: #ffb35c; font-weight: 600; }
+#ppTable tr.storm td:last-child { color: #ff8a7a; font-weight: 600; }
+#ppTable tr.foot td { border: none; color: var(--muted); font-size: 12px; padding-top: 6px; }
+#ppLog { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; max-height: 150px; overflow-y: auto; }
+#ppLog li { padding: 6px 8px; border-left: 3px solid var(--dusk); background: rgba(255,255,255,0.04); border-radius: 0 var(--r-sm) var(--r-sm) 0; }
+#ppLog li.surface { border-left-color: #ffb35c; }
+#ppLog li.none { border-left-color: var(--line); color: var(--muted); }
+#ppLog b { display: block; font-size: 12px; color: var(--muted); font-weight: 600; }
+#ppSrc > summary, .simsrc > summary { cursor: pointer; color: var(--dusk); font-weight: 600; }
+#ppSrcBody p, .simsrc p { margin: 8px 0; }
+#ppSrcBody .srcs a, .simsrc a { color: var(--dusk); }
+.pp-chk { font-size: 12px; margin: 6px 0; }
+.simsrc { margin-top: 8px; font-size: 13px; }
+.simsrc ul { margin: 8px 0; padding-left: 0; list-style: none; display: grid; gap: 6px; }
+#planetWatch:empty { display: none; }
+#planetWatch { border-left: 3px solid #ffb35c; padding-left: 8px; }
+@media (max-width: 720px) {
+  #planetPanel { top: 8px; right: 8px; left: 8px; width: auto; max-height: 70%; }
+  .globe-mode #planetPanel[open] ~ #globeCard, .globe-mode #globeCard { left: 8px; right: 8px; bottom: 8px; width: auto; }
+}

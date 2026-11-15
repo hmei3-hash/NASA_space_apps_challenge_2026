@@ -18,6 +18,8 @@ import { makeHabitat, tickHabitat, HAB_SCALE } from './habitat.js';
 import { ProfileStrip, GAIT_LABEL } from './profile.js';
 import { GlobeView } from './globe.js';
 import { Visor, bearing, yawToHeading } from './visor.js';
+import { makeDustWall, updateDustWall } from './dustwall.js';
+import { StormSim, SCENARIOS, BASES, SOL_S } from './stormsim.js';
 
 const $ = (id) => document.getElementById(id);
 const CHIP = { [LABEL.OBS]: 'o', [LABEL.REPLAY]: 'r', [LABEL.MODEL]: 'm', [LABEL.ASSUMP]: 'a', [LABEL.SCENARIO]: 's' };
@@ -77,6 +79,16 @@ function siteInfo() {
 
 function showGlobeCard(which = 'site') {
   const el = $('globeCard'), s = siteInfo();
+  const base = BASES.find((b) => b.id === which);
+  if (base && which !== 'gale') {
+    const a = planet.sim?.arrivals.find((x) => x.id === which);
+    el.innerHTML = `<h2>${base.name}</h2><p class="coords">${Math.abs(base.lat).toFixed(1)}°${base.lat >= 0 ? 'N' : 'S'}, ${base.lon.toFixed(1)}°E</p>
+      <p>${base.mission} landed here, so there is a surface record to compare against. A crewed base at this site is an assumption used to show hazard sharing.</p>
+      ${a ? `<p>In the ${planet.sim.sc.name.toLowerCase()}: ${a.sol === null ? 'the dust does not reach this base.' : `dust arrives on sol ${a.sol.toFixed(1)}, ${Math.round(a.km0).toLocaleString('en-US')} km from where the storm began.`}</p>` : ''}
+      <button class="ghost" id="gcBack">Back to Jezero</button>`;
+    $('gcBack').onclick = () => showGlobeCard('site');
+    return;
+  }
   if (which === 'gale') {
     el.innerHTML = `<h2>Gale crater</h2><p class="coords">5.4°S, 137.8°E</p>
       <p>Curiosity has measured surface radiation here since 2012. Marswalk's dose rates come from this instrument, about ${Math.round(globe.galeKm).toLocaleString('en-US')} km from Jezero, so they are labelled as Gale data, not Jezero data.</p>
@@ -89,6 +101,79 @@ function showGlobeCard(which = 'site') {
       <p class="src">Globe: ${globe.source || 'loading…'}</p>`;
     $('gcFly').onclick = flyIn;
   }
+}
+
+// ---------- planet-wide hazard sharing (globe view) ----------
+const planet = { sim: null, sol: 0, playing: false, key: '' };
+const SOL_H = SOL_S / 3600;
+const fmtSols = (x) => (x >= 1 ? `${x.toFixed(1)} sols` : x > 0 ? `${Math.round(x * SOL_H)} h` : 'none');
+
+function setupPlanet() {
+  const el = $('planetPanel');
+  if (!el.dataset.built) {
+    el.dataset.built = '1';
+    if (innerWidth < 720) el.open = false;
+    el.innerHTML = `<summary>Planet-wide hazard sharing</summary>
+      <div class="pp-body">
+        <p class="pp-lead">Four bases write what they see to one shared log. Play a storm to see when dust reaches each base and how much warning sharing buys.</p>
+        <label>Storm <select id="ppScen">${Object.entries(SCENARIOS).map(([k, v]) => `<option value="${k}">${v.name}${v.kind === 'replay' ? ' (replay)' : ' (model)'}</option>`).join('')}</select></label>
+        <label>Front speed <select id="ppSpeed"><option value="">As fitted</option>${[5, 15, 25, 40].map((v) => `<option value="${v}">${v} m/s</option>`).join('')}</select></label>
+        <div class="pp-time"><button id="ppPlay" aria-label="Play storm">▶</button><input id="ppSol" type="range" min="0" max="20" step="0.05" value="0" aria-label="Sols since the storm was first seen" /><output id="ppNow"></output></div>
+        <div id="ppFacts"></div>
+        <table id="ppTable"></table>
+        <ol id="ppLog" aria-live="polite"></ol>
+        <details id="ppSrc"><summary>Where this simulation comes from</summary><div id="ppSrcBody"></div></details>
+      </div>`;
+    $('ppScen').onchange = $('ppSpeed').onchange = setupPlanet;
+    $('ppPlay').onclick = () => { if (planet.sol >= planet.sim.sc.lifeSols) planet.sol = 0; planet.playing = !planet.playing; $('ppPlay').textContent = planet.playing ? '❚❚' : '▶'; };
+    $('ppSol').oninput = () => { planet.sol = +$('ppSol').value; planet.key = ''; };
+  }
+  const sp = $('ppSpeed').value;
+  planet.sim = new StormSim($('ppScen').value, sp ? +sp : null); planet.sol = 0; planet.playing = false; planet.key = '';
+  $('ppPlay').textContent = '▶';
+  const sc = planet.sim.sc, sim = planet.sim;
+  $('ppSol').max = Math.min(sc.lifeSols, 24);
+  const chk = sc.checks.map((c) => { const pt = c.base ? BASES.find((b) => b.id === c.base) : c.point; const m = sim.arrivalSol(pt); return `<tr><td>${c.what}</td><td>sol ${c.observedSol[0]}–${c.observedSol[1]}</td><td>${m === null ? 'not reached' : 'sol ' + m.toFixed(1)}</td></tr>`; }).join('');
+  $('ppSrcBody').innerHTML = `
+    <p>${chip(sc.kind === 'replay' ? LABEL.REPLAY : LABEL.MODEL)} ${sc.blurb}</p>
+    <p>${chip(LABEL.MODEL)} The cloud is a disc on the sphere that grows at one front speed${sc.track.length ? ' while its centre travels along a track' : ''}${Number.isFinite(sc.maxRadiusKm) ? `, up to ${sc.maxRadiusKm.toLocaleString('en-US')} km in radius` : ''}. ${sc.fit}</p>
+    ${chk ? `<table class="pp-chk"><tr><th>Observed</th><th>When</th><th>Model${sp ? ` at ${sp} m/s` : ''}</th></tr>${chk}</table>` : ''}
+    <p>${chip(LABEL.ASSUMP)} Crewed bases are placed at four real landing sites so a surface record exists there. The orbiter is taken to deliver one global map per sol, like MRO's MARCI camera does today.</p>
+    <p><b>What changes how far and fast a storm spreads</b> (from the literature): season, where it starts and the low-lying channels it follows, whether it stays big for about 10 sols so that dust heating strengthens the winds that lift more dust, and how much loose dust is left on the ground. Nobody can yet predict which storm will grow, so this is a replay tool, not a forecast.</p>
+    <p class="srcs">Sources: ${sc.sources.map(([n, u]) => `<a href="${u}" target="_blank" rel="noopener">${n}</a>`).join('; ')}. Evidence table: docs/RESEARCH.md, section 4.</p>`;
+  const mid = planet.sim.centre(Math.min(sc.lifeSols, 24) / 2), jz = BASES[0];
+  globe?.setHome((mid.lat + jz.lat) / 2, (mid.lon + jz.lon) / 2 + (Math.abs(mid.lon - jz.lon) > 180 ? 180 : 0));
+}
+
+function tickPlanet(dt) {
+  const sim = planet.sim; if (!sim) return;
+  const sc = sim.sc, life = Math.min(sc.lifeSols, 24);
+  if (planet.playing) {
+    planet.sol = Math.min(life, planet.sol + dt * 0.7);
+    if (planet.sol >= life) { planet.playing = false; $('ppPlay').textContent = '▶'; }
+  }
+  const sol = planet.sol;
+  const fade = Math.min(1, sol / 0.4) * (Number.isFinite(sc.maxRadiusKm) ? Math.max(0, Math.min(1, (sc.lifeSols - sol) / 2)) : 1);
+  globe.setStorm(sim.centre(sol), sim.radiusKm(sol), sc.northLimit, fade);
+  const st = BASES.map((b) => sim.status(b, sol));
+  BASES.forEach((b, i) => globe.setBaseStatus(b.id, st[i]));
+  const key = `${Math.round(sol * 20)}|${st.join()}`;
+  if (key === planet.key) return;
+  planet.key = key;
+  $('ppSol').value = sol;
+  $('ppNow').textContent = `Sol ${sol.toFixed(1)}`;
+  const area = sim.areaKm2(sol), pct = (area / (4 * Math.PI * 3389.5 ** 2)) * 100;
+  const cls = area > 1e7 ? 'major, above 10⁷ km²' : area > 1.6e6 ? 'regional, above 1.6×10⁶ km²' : 'local';
+  $('ppFacts').innerHTML = `<span>${sc.season}</span><span>Front ${sim.speedMs} m/s ${chip($('ppSpeed').value ? LABEL.ASSUMP : LABEL.MODEL)}</span><span>Dust over ${pct < 10 ? pct.toFixed(1) : Math.round(pct)}% of Mars (${cls})</span>`;
+  const warn = sim.warning();
+  $('ppTable').innerHTML = `<tr><th>Base</th><th>Dust arrives</th><th>Shared warning</th><th>Status</th></tr>` + warn.map((w, i) =>
+    `<tr class="${st[i]}"><td>${w.name}</td><td>${w.sol === null ? 'not reached' : 'sol ' + w.sol.toFixed(1)}</td><td>${w.sol === null ? '–' : fmtSols(w.shared)}</td><td>${st[i] === 'storm' ? 'in the storm' : st[i] === 'watch' ? `watch, ${fmtSols(w.sol - sol)} left` : 'clear'}</td></tr>`).join('') +
+    `<tr class="foot"><td colspan="4">Alone, a base hears nothing until its own stations see the front: about 1 hour with a 100 km station ring, nothing without one.</td></tr>`;
+  const log = sim.log(sol);
+  $('ppLog').innerHTML = log.length ? log.map((e) => `<li class="${e.kind}"><b>Sol ${e.sol.toFixed(1)} · ${e.who}</b> ${e.text}</li>`).join('') : '<li class="none">Nothing on the shared log yet.</li>';
+  const j = BASES.findIndex((b) => b.id === 'jezero'), jw = warn[j];
+  $('planetWatch').innerHTML = st[j] === 'watch' ? `${chip(LABEL.MODEL)} Shared log: dust from the ${sc.name.toLowerCase()} is expected at Jezero in about ${fmtSols(jw.sol - sol)}. Plan EVAs with a shelter in reach.`
+    : st[j] === 'storm' ? `${chip(LABEL.MODEL)} Shared log: Jezero is inside the ${sc.name.toLowerCase()}. Turn on the dust front below to rehearse it.` : '';
 }
 
 function setView(v) {
@@ -436,9 +521,18 @@ function drawTrack() {
 
 // ---------- mid-EVA re-planning + dust-front early warning ----------
 const PACE = { dustNew: 0.7, dustTracks: 0.85 }; // Assumption: slower in low visibility, less so on known tracks
+// Assumptions: wait in the rover until the gusty leading edge has passed (winds peaked as the 2022 storm arrived at Jezero),
+// then drive home sealed inside at the ~10 km/h top speed given for NASA's pressurized-rover concepts.
+const ROVER = { gustWaitS: 45 * 60, driveKmh: 10, walkKmh: 3.1, maxWaitS: 4 * 3600 };
+
+/** How long to stay in the rover: dust → until the front plus its gusts have passed; SEP → until the dose rate is back under the warning level. */
+function shelterWait(kind, inAt, idx) {
+  if (kind === 'dust' && front) return Math.min(ROVER.maxWaitS, Math.max(10 * 60, front.arrivalAt(idxXY(idx).x) + ROVER.gustWaitS - inAt));
+  for (let t = inAt; t < inAt + ROVER.maxWaitS; t += 300) if (env.doseRate(t).v < CONFIG.radWarnUGyPerDay.value) return Math.max(10 * 60, t - inAt);
+  return ROVER.maxWaitS;
+}
 let front = null; // DustFront while the dust scenario is on
-const dustWall = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0xa8714b, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
-dustWall.rotation.y = Math.PI / 2; dustWall.visible = false; scene.add(dustWall);
+const dustWall = makeDustWall(); scene.add(dustWall);
 const stationGroup = new THREE.Group(); scene.add(stationGroup);
 const roverGroup = new THREE.Group(); scene.add(roverGroup);
 
@@ -446,7 +540,7 @@ function integrate(fn, t0, t1) { let acc = 0; for (let t = t0; t < t1; t += 60) 
 
 /** Pressurized rover staged at the middle of the outbound leg (Assumption): a safe haven within reach. */
 function placeRover() {
-  roverGroup.clear(); S.roverIdx = null;
+  roverGroup.clear(); S.roverIdx = null; S.roverMesh = null;
   const r = S.routes[S.sel === 'replan' ? 'gentlest' : S.sel] || S.routes.gentlest; if (!r) return;
   const out = r.samples.filter((s) => s.phase === 'out'); if (out.length < 10) return;
   S.roverIdx = out[Math.floor(out.length / 2)].i;
@@ -457,28 +551,32 @@ function placeRover() {
   cab.position.set(2.4, 3.4, 0);
   const g = new THREE.Group(); g.add(body, cab);
   for (const [x, z] of [[-2, -1.8], [2, -1.8], [-2, 1.8], [2, 1.8]]) { const w = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.6, 14), new THREE.MeshStandardMaterial({ color: 0x2a2f36 })); w.rotation.x = Math.PI / 2; w.position.set(x, 0.9, z); g.add(w); }
-  g.scale.setScalar(S.fp ? 1 : HAB_SCALE); g.position.copy(p); roverGroup.add(g);
-  const l = labelSprite('Shelter rover (assumed)', '#9fd3ff'); l.position.copy(p).add(new THREE.Vector3(0, 70, 0)); roverGroup.add(l);
+  g.scale.setScalar(S.fp ? 1 : HAB_SCALE); g.position.copy(p); roverGroup.add(g); S.roverMesh = g; S.roverHome = p.clone();
+  const l = labelSprite('Shelter rover (assumed)', '#9fd3ff'); l.position.set(0, 70 / g.scale.x, 0); l.scale.divideScalar(g.scale.x); g.add(l);
 }
 
 const DIRWORD = { N: 'north', E: 'east', S: 'south', W: 'west' };
-const stationName = (s) => (s.id === 'HAB' ? 'habitat met station' : `station ${s.id}, ${s.km} km ${DIRWORD[s.dir]}`);
+const stationName = (s) => (s.team ? `Team B, ${s.km} km west of the habitat` : s.id === 'HAB' ? 'habitat met station' : `station ${s.id}, ${s.km} km ${DIRWORD[s.dir]}`);
+const teamKm = () => ($('scTeam').checked ? Math.max(0, +$('scTeamKm').value || 0) : 0);
+const stationLabel = (s, lit) => (s.team ? (lit ? `Team B reports dust, ${s.km} km west` : `Team B (second EVA), ${s.km} km west`) : lit ? `Dust detected: ${s.id}${s.km ? `, ${s.km} km` : ''}` : s.id === 'HAB' ? 'Habitat met station' : `Met station ${s.id}, ${s.km} km`);
 
 function setupFront() {
   stationGroup.clear(); front = null; dustWall.visible = false;
   const d = env.scenarios.dust; delete d.crewStartS;
   if (!d.on || !S.t) return;
   const h = idxXY(S.habitatIdx);
-  front = new DustFront(h.x, h.y, d.startS, $('scNet').value);
+  front = new DustFront(h.x, h.y, d.startS, $('scNet').value, teamKm());
   front.stations.forEach((s) => {
     const inside = s.x >= 0 && s.x <= W() && s.y >= 0 && s.y <= H();
     const x = Math.max(0, Math.min(W(), s.x)), y = Math.max(0, Math.min(H(), s.y));
     const pos = toWorld(x, y, zAtXY(x, y));
-    if (inside) {
+    if (inside && s.team) {
+      const f = makeAstronaut(0xdfe9f2, 0x4fc3f7); f.scale.setScalar(SCALE); f.position.copy(pos); stationGroup.add(f);
+    } else if (inside) {
       const mast = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 60, 6), new THREE.MeshStandardMaterial({ color: 0xb9bec4 })); mast.position.copy(pos).add(new THREE.Vector3(0, 30, 0)); stationGroup.add(mast);
     }
     s._pos = pos; s._inside = inside; s._lit = false;
-    s._label = labelSprite(`${inside ? '' : '→ '}${s.id === 'HAB' ? 'Habitat met station' : `Met station ${s.id}, ${s.km} km`}`, '#9fd3ff');
+    s._label = labelSprite(`${inside ? '' : '→ '}${stationLabel(s, false)}`, s.team ? '#8fe0a8' : '#9fd3ff');
     s._label.position.copy(pos).add(new THREE.Vector3(0, 90, 0)); stationGroup.add(s._label);
   });
 }
@@ -486,20 +584,26 @@ function setupFront() {
 function updateFront(tS, crewX) {
   if (!front) { dustWall.visible = false; return null; }
   const fx = front.x(tS);
-  dustWall.visible = fx > -4000 && fx < W() + 4000;
-  dustWall.scale.set(H() + 6000, 900, 1);
-  dustWall.position.set(fx - W() / 2, 450, 0);
+  dustWall.visible = fx > -40000 && fx < W() + 12000;
+  updateDustWall(dustWall, fx - W() / 2, H() + 9000, S.fp ? 1600 : 750, performance.now() / 1000, S.fp);
   env.scenarios.dust.crewStartS = front.arrivalAt(crewX);
   const K = front.knowledge(tS, crewX);
   for (const s of front.stations) {
     const lit = K ? K.det.some((d) => d.id === s.id) : false;
     if (lit !== s._lit) {
       stationGroup.remove(s._label);
-      s._label = labelSprite(`${lit ? 'Dust detected: ' : 'Met station '}${s.id}${s.km ? `, ${s.km} km` : ''}`, lit ? '#ff8a7a' : '#9fd3ff');
+      s._label = labelSprite(`${s._inside ? '' : '→ '}${stationLabel(s, lit)}`, lit ? '#ff8a7a' : s.team ? '#8fe0a8' : '#9fd3ff');
       s._label.position.copy(s._pos).add(new THREE.Vector3(0, 90, 0)); stationGroup.add(s._label); s._lit = lit;
     }
   }
   return K;
+}
+
+/** How much warning the second team's broadcast added, compared with the fixed stations alone. */
+function teamGainLine(first) {
+  if (!first?.team) return '';
+  const alone = new DustFront(front.hx, front.hy, front.tHab, $('scNet').value, 0).detections()[0];
+  return ` <span class="rp-share">Team B's broadcast gave you ${fmtMin(alone.t - first.t)} more warning than the ${stationName(alone)}.</span>`;
 }
 
 function replanOptions(kind) {
@@ -508,13 +612,13 @@ function replanOptions(kind) {
   const dust = kind === 'dust', opts = [];
   const finish = (key, name, why, route, shelterIdx, extra = {}) => {
     if (!route) return;
-    const end = route.durationS, fromNow = end - tS;
+    const end = route.durationS, safeAt = extra.inAt ?? end, fromNow = safeAt - tS;
     const sx = shelterIdx !== null ? idxXY(shelterIdx).x : null;
     const frontAt = dust && front && sx !== null ? front.arrivalAt(sx) : null;
-    const slack = frontAt !== null ? frontAt - end : null;
-    const doseUGy = integrate((x) => env.doseRate(x).v / 86400, tS, end);
+    const slack = frontAt !== null ? frontAt - safeAt : null;
+    const doseUGy = integrate((x) => env.doseRate(x).v / 86400, tS, safeAt);
     const distNow = Math.max(0, route.distanceM - walkedDistance(r, tS));
-    opts.push({ key, name, why, route, fromNow, end, slack, stormS: slack !== null ? Math.max(0, -slack) : null, doseUGy, distNow, maxSlope: route.maxSlopeDeg, ...extra });
+    opts.push({ key, name, why, route, fromNow, end, homeIn: end - tS, slack, stormS: slack !== null ? Math.max(0, -slack) : null, doseUGy, distNow, maxSlope: route.maxSlopeDeg, ...extra });
   };
   const direct = astar(t, cur, S.habitatIdx, dust ? 'shortest' : 'shortest', CONFIG.maxSlopeDeg.value);
   if (direct && direct.length > 1) finish('direct', 'Head straight home', dust ? 'Fastest path to the habitat. New ground if visibility drops on the way.' : 'Fastest path to shelter in the habitat.',
@@ -523,8 +627,16 @@ function replanOptions(kind) {
     spliceRoute(t, r, tS, [{ cells: walked.slice().reverse(), phase: 'return', speedMul: dust ? PACE.dustTracks : 1 }]), S.habitatIdx);
   if (S.roverIdx !== null && S.roverIdx !== undefined) {
     const toRover = astar(t, cur, S.roverIdx, 'shortest', CONFIG.maxSlopeDeg.value);
-    if (toRover && toRover.length > 1) finish('rover', 'Shelter in the staged rover', 'Get into the pressurized rover parked on the route and wait the storm out.',
-      spliceRoute(t, r, tS, [{ cells: toRover, phase: 'return', stopAfterMin: 1, stopTag: 'rover' }]), S.roverIdx);
+    if (toRover && toRover.length > 1) {
+      const walk = spliceRoute(t, r, tS, [{ cells: toRover, phase: 'return', stopAfterMin: 1, stopTag: 'rover' }]);
+      const inAt = walk ? walk.durationS - 60 : tS;
+      const waitS = shelterWait(kind, inAt, S.roverIdx);
+      const home = astar(t, S.roverIdx, S.habitatIdx, 'gentlest', CONFIG.maxSlopeDeg.value);
+      const legs = [{ cells: toRover, phase: 'return', stopAfterMin: waitS / 60, stopTag: 'rover' }];
+      if (home && home.length > 1) legs.push({ cells: home, phase: 'drive', speedMul: ROVER.driveKmh / ROVER.walkKmh });
+      finish('rover', 'Shelter in the staged rover', `Get into the pressurized rover, wait ${dust ? 'until the gust front has passed' : 'until the dose rate drops'}, then drive home inside it.`,
+        spliceRoute(t, r, tS, legs), S.roverIdx, { inAt, waitS });
+    }
   }
   const remaining = r.durationS - tS, est = dust ? remaining / PACE.dustNew : remaining;
   finish('continue', 'Continue the plan', 'Keep going to the destination and stops as planned.', { ...r, durationS: tS + est }, S.habitatIdx, { projected: true });
@@ -548,40 +660,43 @@ function openReplan(kind) {
   const r = S.routes[S.sel], p = sampleAt(r, S.tS);
   const opts = replanOptions(kind), budget = CONFIG.evaLimitH.value * 3600, c = CASES[kind];
   const K = kind === 'dust' && front ? front.knowledge(S.tS, p.x) : null;
-  const optHTML = opts.map((o, i) => {
-    const m = budget - o.end;
-    const verdict = o.slack === null ? '' : o.slack >= 0 ? `<p class="ok">Inside ${fmtMin(o.slack)} before the front</p>` : `<p class="bad">Front arrives ${fmtMin(-o.slack)} before you reach shelter</p>`;
-    return `<div class="rp-opt ${o.recommended ? 'rec' : ''}">
-      <div class="rp-top"><b>${o.name}</b>${o.recommended ? '<span class="rp-badge">Recommended</span>' : ''}</div>
-      <p>${o.why}</p>${o.key === 'continue' ? '' : verdict}
-      <dl class="rp-m">
-        <div><dt>${o.key === 'rover' ? 'In the rover in' : 'Home in'}</dt><dd>${fmtHM(o.fromNow)}${o.projected ? ' (est.)' : ''}</dd></div>
-        <div><dt>Distance</dt><dd>${(o.distNow / 1000).toFixed(1)} km</dd></div>
-        <div><dt>Max slope</dt><dd>${o.maxSlope.toFixed(0)}°</dd></div>
-        <div><dt>${kind === 'dust' ? 'Exposed to storm' : 'Extra dose'}</dt><dd>${kind === 'dust' ? (o.key === 'continue' ? 'most of it' : fmtMin(o.stormS || 0)) : o.doseUGy.toFixed(1) + ' µGy'}</dd></div>
-        <div><dt>EVA margin</dt><dd class="${m < 0 ? 'bad' : ''}">${m < 0 ? '−' + fmtHM(-m) : fmtHM(m)}</dd></div>
-      </dl>
-      <button class="${o.recommended ? 'go' : 'ghost'}" data-i="${i}">${o.key === 'continue' ? 'Keep the plan' : 'Choose this'}</button>
+  const order = [...opts.keys()].sort((x, y) => (opts[y].recommended ? 1 : 0) - (opts[x].recommended ? 1 : 0) || (opts[x].key === 'continue') - (opts[y].key === 'continue'));
+  const optHTML = order.map((i) => {
+    const o = opts[i], m = budget - o.end;
+    const safe = o.key === 'continue' ? null : o.slack === null ? true : o.slack >= 0;
+    const verdict = o.key === 'continue' ? `<p class="rp-v bad">You stay out in ${kind === 'dust' ? 'the storm' : 'the event'}</p>`
+      : o.slack === null ? `<p class="rp-v ok">Sheltered in ${fmtHM(o.fromNow)}</p>`
+      : safe ? `<p class="rp-v ok">Safe, ${fmtMin(o.slack)} to spare</p>` : `<p class="rp-v bad">Caught ${fmtMin(-o.slack)} before shelter</p>`;
+    const plan = o.key === 'rover' ? `In the rover in ${fmtHM(o.fromNow)} · wait ${fmtHM(o.waitS)} · home ${fmtHM(o.homeIn)}`
+      : o.key === 'continue' ? `Home in about ${fmtHM(o.homeIn)}` : `Home in ${fmtHM(o.fromNow)} · ${(o.distNow / 1000).toFixed(1)} km`;
+    return `<div class="rp-opt ${o.recommended ? 'rec' : ''} ${o.key === 'continue' ? 'weak' : ''}">
+      <b class="rp-name">${o.name}</b>${verdict}
+      <p class="rp-plan">${plan}</p>
+      <p class="rp-fine">max ${o.maxSlope.toFixed(0)}° · EVA margin <span class="${m < 0 ? 'bad' : ''}">${m < 0 ? '−' + fmtHM(-m) : fmtHM(m)}</span>${kind === 'sep' ? ` · +${o.doseUGy.toFixed(0)} µGy` : ''}</p>
+      <button class="${o.recommended ? 'go' : 'ghost'}" data-i="${i}">${o.recommended ? 'Go: ' + o.name.toLowerCase() : o.key === 'continue' ? 'Keep the plan' : 'Choose'}</button>
     </div>`;
   }).join('');
   const first = K?.det[0];
+  const eta = K && K.passed ? 'It is over you now.' : `Reaches you in ${K ? fmtMin(K.etaS) : '?'}.`;
   const head = kind === 'dust'
-    ? `<h2 id="rpTitle">Dust front detected ${first ? `at ${stationName(first)}` : ''}. ${K && K.passed ? 'It is already over you.' : `Reaches you in about ${K ? fmtMin(K.etaS) : '?'}.`}</h2>
-       <p>Network: ${front.network.name} <i class="pv a">proposed</i>. Moving east at ${K ? K.speed.toFixed(0) : FRONT.speedMs} m/s <i class="pv ${K && K.speedLabel === 'measured' ? 'o' : 'a'}">${K ? K.speedLabel : 'assumed'}</i>, the speed measured for the January 2022 storm at Jezero. Pace drops to ${Math.round(PACE.dustTracks * 100)}% on your own tracks once the dust arrives <i class="pv a">assumed</i>. Earth is 4 to 24 light-minutes away, so this call is yours.</p>`
-    : `<h2 id="rpTitle">Solar particle event at T+${fmtHM(S.tS)}. Get to shelter.</h2>
-       <p>Dose rate follows the May 2024 RAD event profile <i class="pv s">scenario</i>. Shielding by terrain is not modelled. Earth is 4 to 24 light-minutes away, so this call is yours.</p>`;
+    ? `<h2 id="rpTitle">Dust front. ${eta}</h2>
+       <p class="rp-src">${first?.team ? `Reported by ${stationName(first)}.` : `Detected at ${first ? stationName(first) : 'a station'}.`}${teamGainLine(first)}</p>`
+    : `<h2 id="rpTitle">Solar particle event. Get to shelter.</h2>`;
+  const more = kind === 'dust'
+    ? `<p>Network: ${front.network.name} <i class="pv a">proposed</i>. Front moving east at ${K ? K.speed.toFixed(0) : FRONT.speedMs} m/s <i class="pv ${K && K.speedLabel === 'measured' ? 'o' : 'a'}">${K ? K.speedLabel : 'assumed'}</i>, the speed measured for the January 2022 storm at Jezero. Pace drops to ${Math.round(PACE.dustTracks * 100)}% on your own tracks once dust arrives <i class="pv a">assumed</i>. In the rover the crew waits ${Math.round(ROVER.gustWaitS / 60)} min after the front for the gusts to pass, then drives home at ${ROVER.driveKmh} km/h <i class="pv a">assumed</i>.</p>`
+    : `<p>Dose rate follows the May 2024 RAD event profile <i class="pv s">scenario</i>. The crew stays in the rover until the dose rate is back under ${CONFIG.radWarnUGyPerDay.value} µGy/day, then drives home. Terrain shielding is not modelled.</p>`;
   const el = $('replan');
   el.innerHTML = `<div class="rp-card" role="alertdialog" aria-modal="true" aria-labelledby="rpTitle">
     <div class="rp-head">${head}</div>
-    <div class="rp-body">
-      <div class="rp-opts">${optHTML}</div>
-      <aside class="rp-why">
-        <h3>${c.title}</h3>
-        <ul>${c.points.map((x) => `<li>${x}</li>`).join('')}</ul>
-        <p class="lesson">${c.lesson}</p>
-        <p class="srcs">Sources: ${c.sources.map(([n, u]) => `<a href="${u}" target="_blank" rel="noopener">${n}</a>`).join('; ')}. Full notes in docs/RESEARCH.md.</p>
-      </aside>
-    </div>
+    <div class="rp-opts">${optHTML}</div>
+    <details class="rp-why">
+      <summary>Why this matters, and what is assumed</summary>
+      ${more}
+      <h3>${c.title}</h3>
+      <ul>${c.points.map((x) => `<li>${x}</li>`).join('')}</ul>
+      <p class="lesson">${c.lesson} Earth is 4 to 24 light-minutes away, so this call is the crew's.</p>
+      <p class="srcs">Sources: ${c.sources.map(([n, u]) => `<a href="${u}" target="_blank" rel="noopener">${n}</a>`).join('; ')}. Full notes in docs/RESEARCH.md.</p>
+    </details>
   </div>`;
   el.hidden = false;
   el.querySelectorAll('button[data-i]').forEach((b) => b.onclick = () => applyReplan(kind, opts[+b.dataset.i]));
@@ -629,7 +744,12 @@ function update(dtReal) {
   });
   const K = updateFront(S.tS, p.x);
   updateDust(dust, crew[0].position, tau.v, Wd.v, dtReal);
-  crew[0].visible = !S.fp;
+  const driving = p.phase === 'drive';
+  crew[0].visible = !S.fp && !driving; crew[1].visible = !driving;
+  if (S.roverMesh) {
+    if (driving) { S.roverMesh.position.copy(toWorld(p.x, p.y, p.z)); if (p.heading !== undefined) S.roverMesh.rotation.y = -p.heading; }
+    else S.roverMesh.position.copy(S.roverHome);
+  }
   dust.material.size = S.fp ? 0.35 : 4;
   // sky/fog: thicker with dust optical depth (visual cue; visibility itself is not modeled)
   const dustK = Math.min(1, Math.max(0, (tau.v - 0.5) / 2));
@@ -662,6 +782,7 @@ function update(dtReal) {
   if (state.flags.includes('dust')) hud.push(`<div class="hudmsg dust">Dust storm, τ ${tau.v.toFixed(1)}. Visibility down; protect seals, optics and solar panels.</div>`);
   if (S.tS > CONFIG.evaLimitH.value * 3600) hud.push('<div class="hudmsg margin">Past the EVA time budget</div>');
   if (K && !K.passed) hud.push(`<div class="hudmsg dust">Dust front about ${Math.round((p.x - K.frontXEst) / 1000)} km west, moving east at ${K.speed.toFixed(0)} m/s. Reaches you in about ${fmtMin(K.etaS)}.</div>`);
+  if (K && K.passed && front && front.tHab > S.tS) hud.push(`<div class="hudmsg fp">Your sighting is on the shared log. The front reaches the habitat in about ${fmtMin(front.tHab - S.tS)}.</div>`);
   if (S.sel === 'replan' && S.replanInfo) hud.push(`<div class="hudmsg fp">Re-planned at T+${fmtHM(S.replanInfo.at)}: ${S.replanInfo.name.toLowerCase()}</div>`);
   const hudHTML = hud.join(''); if (hudHTML !== lastHud) { $('hud').innerHTML = hudHTML; lastHud = hudHTML; }
   if (S.fp) updateVisor(r, p, { T, P, Wd, tau, dr, cum, K });
@@ -801,7 +922,7 @@ function wire() {
     S.handled = { dust: false, sep: false }; setupFront();
     renderTable(); drawTrack(); update(0);
   };
-  ['scDust', 'scDustT', 'scSep', 'scSepT', 'scNet'].forEach((id) => $(id).onchange = sc);
+  ['scDust', 'scDustT', 'scSep', 'scSepT', 'scNet', 'scTeam', 'scTeamKm'].forEach((id) => $(id).onchange = sc);
   const setFP = (on) => {
     if (on && S.view === 'globe') return;
     S.fp = on; $('fpBtn').classList.toggle('on', on); controls.enabled = !on;
@@ -868,6 +989,7 @@ function loop(now) {
     if (S.tS >= r.durationS) { S.playing = false; $('play').textContent = '▶'; }
   }
   if (S.view === 'globe') {
+    tickPlanet(dt);
     const fade = globe.render(dt);
     if (fade > 0) $('fade').style.opacity = fade;
     requestAnimationFrame(loop);
@@ -875,7 +997,7 @@ function loop(now) {
   }
   if (r) update(dt);
   tickHabitat(habitat, now / 1000);
-  controls.update();
+  if (!S.fp) controls.update(); // in first person the orbit controls would re-aim the camera at the old target
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }
@@ -915,7 +1037,8 @@ async function main() {
   controls.target.copy(h0);
   camera.position.copy(h0).add(new THREE.Vector3(-260, 240, 420));
   renderSites(); renderResourceList(); wire(); buildPlaces(); recompute();
-  globe = new GlobeView(renderer, renderer.domElement, { site: siteInfo(), gale: GALE, onSelect: (w) => showGlobeCard(w) });
+  globe = new GlobeView(renderer, renderer.domElement, { site: siteInfo(), gale: GALE, extraBases: BASES.filter((b) => b.id !== 'jezero' && b.id !== 'gale'), onSelect: (w) => showGlobeCard(w) });
+  setupPlanet();
   globe.onSource = () => { if (S.view === 'globe') showGlobeCard('site'); };
   resize();
   $('globeBtn').onclick = () => setView(S.view === 'globe' ? 'local' : 'globe');

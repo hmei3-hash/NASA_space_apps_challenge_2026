@@ -51,8 +51,17 @@ async function loadMarsTexture(onSource) {
   return new THREE.CanvasTexture(c);
 }
 
+function textSprite(text) {
+  const c = document.createElement('canvas'), g = c.getContext('2d'), F = "600 44px 'Barlow Condensed', 'Barlow', sans-serif";
+  g.font = F; c.width = Math.ceil(g.measureText(text).width) + 28; c.height = 60;
+  g.font = F; g.textBaseline = 'middle'; g.lineWidth = 7; g.strokeStyle = 'rgba(5,6,10,0.85)'; g.strokeText(text, 14, 31); g.fillStyle = '#f1e7d8'; g.fillText(text, 14, 31);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthTest: false }));
+  sp.scale.set((c.width / c.height) * 0.07, 0.07, 1); sp.renderOrder = 5;
+  return sp;
+}
+
 export class GlobeView {
-  constructor(renderer, dom, { site, gale, onSelect }) {
+  constructor(renderer, dom, { site, gale, onSelect, extraBases = [] }) {
     this.renderer = renderer; this.dom = dom; this.site = site; this.onSelect = onSelect;
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x05060a);
@@ -104,6 +113,49 @@ export class GlobeView {
     arcLine.computeLineDistances(); this.markers.add(arcLine);
     this.galeKm = greatCircleKm(gale, site);
 
+    // other bases (assumed outposts at real landing sites) and name labels
+    this.basePins = { jezero: this.siteMarker, gale: this.galeMarker };
+    for (const b of extraBases) this.basePins[b.id] = this._pin(b.lat, b.lon, 0x7fb2d9, 0.014);
+    this.baseLabels = {};
+    for (const b of [{ id: 'jezero', name: 'Jezero', ...site }, { id: 'gale', name: 'Gale', ...gale }, ...extraBases]) {
+      const l = textSprite(b.name); l.position.copy(latLonToVec3(b.lat + (b.id === 'elysium' ? 3.5 : b.id === 'gale' ? -3.5 : 0), b.lon, 1.06)); this.markers.add(l); this.baseLabels[b.id] = l;
+    }
+
+    // dust storm footprint: a shell just above the surface, drawn by a shader
+    this.stormU = { c: { value: new THREE.Vector3(1, 0, 0) }, rad: { value: 0 }, nlim: { value: 1 }, t: { value: 0 }, k: { value: 0 } };
+    this.storm = new THREE.Mesh(new THREE.SphereGeometry(1.012, 160, 80), new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, uniforms: this.stormU,
+      vertexShader: 'varying vec3 vP; varying vec3 vN; varying vec3 vV; void main(){ vP = normalize(position); vN = normalize(normalMatrix*normal); vec4 mv = modelViewMatrix*vec4(position,1.0); vV = normalize(-mv.xyz); gl_Position = projectionMatrix*mv; }',
+      fragmentShader: `
+        uniform vec3 c; uniform float rad; uniform float nlim; uniform float t; uniform float k;
+        varying vec3 vP; varying vec3 vN; varying vec3 vV;
+        float h(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+        float n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+          return mix(mix(mix(h(i), h(i+vec3(1,0,0)), f.x), mix(h(i+vec3(0,1,0)), h(i+vec3(1,1,0)), f.x), f.y),
+                     mix(mix(h(i+vec3(0,0,1)), h(i+vec3(1,0,1)), f.x), mix(h(i+vec3(0,1,1)), h(i+vec3(1,1,1)), f.x), f.y), f.z); }
+        float fbm(vec3 p){ float a = 0.5, s = 0.0; for(int i=0;i<5;i++){ s += a*n3(p); p = p*2.03 + vec3(1.7, 9.2, 3.1); a *= 0.5; } return s; }
+        void main(){
+          if (rad <= 0.0 || k <= 0.0) discard;
+          float d = acos(clamp(dot(vP, c), -1.0, 1.0));
+          // swirl the sampling point around the storm centre so the cloud visibly turns and billows
+          float ang = 0.9 * (1.0 - d/max(rad, 0.001)) + t*0.05;
+          vec3 ax = c; vec3 q = vP*cos(ang) + cross(ax, vP)*sin(ang) + ax*dot(ax, vP)*(1.0-cos(ang));
+          float w = fbm(q*7.0 + vec3(t*0.03, 0.0, -t*0.02));
+          float fine = fbm(q*24.0 - vec3(0.0, t*0.06, 0.0));
+          float edge = rad * (0.86 + 0.28*w);
+          float a = 1.0 - smoothstep(edge*0.78, edge, d);
+          a *= 1.0 - smoothstep(nlim - 0.03, nlim + 0.02, vP.y);       // northern limit (vP.y = sin lat)
+          float core = 1.0 - smoothstep(0.0, edge, d);
+          float dens = clamp(a * (0.50 + 0.38*w + 0.22*fine + 0.25*core), 0.0, 0.93) * k;
+          float front = smoothstep(edge*0.70, edge*0.95, d) * a;        // brighter, lifted leading edge
+          vec3 col = mix(vec3(0.72, 0.53, 0.34), vec3(0.90, 0.74, 0.52), fine);
+          col = mix(col, vec3(0.97, 0.86, 0.66), front*0.55);
+          float lit = 0.55 + 0.45*max(dot(vN, normalize(vec3(-0.6, 0.4, 0.7))), 0.0);
+          gl_FragColor = vec4(col*lit, dens);
+        }`,
+    }));
+    this.scene.add(this.storm);
+
     this._home();
     // click a marker
     this.ray = new THREE.Raycaster(); this.ray.params.Points = { threshold: 0.02 };
@@ -113,8 +165,10 @@ export class GlobeView {
       if (!this.active || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
       const r = dom.getBoundingClientRect();
       this.ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), this.camera);
-      const hit = this.ray.intersectObjects([this.siteMarker, this.galeMarker], true)[0];
-      if (hit) this.onSelect?.(hit.object.parent === this.galeMarker || hit.object === this.galeMarker ? 'gale' : 'site');
+      const hit = this.ray.intersectObjects(Object.values(this.basePins), true)[0];
+      if (!hit) return;
+      const id = Object.keys(this.basePins).find((k) => this.basePins[k] === hit.object.parent || this.basePins[k] === hit.object);
+      this.onSelect?.(id === 'jezero' ? 'site' : id);
     });
   }
 
@@ -130,11 +184,34 @@ export class GlobeView {
   }
 
   _home() {
-    const v = latLonToVec3(this.site.lat - 8, this.site.lon - 25).multiplyScalar(3.3);
+    const h = this.home || { lat: this.site.lat - 8, lon: this.site.lon - 25 };
+    const v = latLonToVec3(h.lat, h.lon).multiplyScalar(3.4);
     this.camera.position.copy(v); this.controls.target.set(0, 0, 0); this.controls.update();
   }
 
-  resize(w, h) { this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); }
+  /** Draw the storm footprint. centre {lat,lon}, radiusKm, northLimit (deg), strength 0..1. */
+  setStorm(centre, radiusKm, northLimit = 90, strength = 1) {
+    if (!centre || radiusKm <= 0) { this.stormU.rad.value = 0; return; }
+    this.stormU.c.value.copy(latLonToVec3(centre.lat, centre.lon));
+    this.stormU.rad.value = Math.min(Math.PI, radiusKm / R_KM);
+    this.stormU.nlim.value = Math.sin((northLimit * Math.PI) / 180);
+    this.stormU.k.value = strength;
+  }
+  setBaseStatus(id, status) {
+    const pin = this.basePins[id]; if (!pin || pin.userData.status === status) return;
+    pin.userData.status = status;
+    const col = status === 'storm' ? 0xff5a4e : status === 'watch' ? 0xffb35c : id === 'jezero' ? 0xe3b26b : 0x7fb2d9;
+    pin.children.forEach((m) => m.material.color.setHex(col));
+  }
+  /** Where the globe view starts; also moves there now if the globe is showing. */
+  setHome(lat, lon) { this.home = { lat: Math.max(-35, Math.min(35, lat)), lon }; if (this.active && !this._fly) this._home(); }
+
+  resize(w, h) {
+    this.camera.aspect = w / h;
+    // leave room for the hazard panel on the right: shift the planet left on wide screens
+    if (w > 900) this.camera.setViewOffset(w, h, Math.min(220, w * 0.2), 0, w, h); else this.camera.clearViewOffset();
+    this.camera.updateProjectionMatrix();
+  }
 
   setActive(on) { this.active = on; this.controls.enabled = on; if (on) { this.controls.autoRotate = true; this._home(); } }
 
@@ -156,10 +233,13 @@ export class GlobeView {
 
   render(dt) {
     const now = performance.now();
+    this.stormU.t.value = now / 1000;
     let fade = 0;
     if (this._fly) { const t = this._fly(now); fade = Math.max(0, (t - 0.7) / 0.3); } else this.controls.update();
     const s = 1 + 0.35 * Math.sin(now / 300);
-    this.siteMarker.userData.ring.scale.set(s, s, s);
+    for (const p of Object.values(this.basePins)) { const on = p === this.siteMarker || p.userData.status === 'storm' || p.userData.status === 'watch'; const q = on ? s : 1; p.userData.ring.scale.set(q, q, q); }
+    const cd = this.camera.position.clone().normalize();
+    for (const l of Object.values(this.baseLabels)) l.visible = l.position.clone().normalize().dot(cd) > 0.25;
     this.renderer.render(this.scene, this.camera);
     return fade;
   }

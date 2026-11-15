@@ -10,6 +10,7 @@ export const CASES = {
       'MEPAG asked for a met package at the landing site and an orbital weather station that can alert surface crews, but agreed on no number or layout for a surface network. An ESA study modelled four landers around candidate human sites.',
       'June 2018: a storm first seen on 30 May grew much faster than the 2007 storm. Opportunity lost contact on 10 June and never answered again.',
       'Forecasting storm onset is still unsolved: there is no known predictor of which local storm will grow.',
+      'At planet scale, the 2018 storm went from a patch in Acidalia to the whole planet in about 20 days; its edges moved at 5 to 40 m/s. A base the storm reaches first can warn the others days ahead (open the Globe).',
     ],
     lesson: 'Warnings will be short and late, so the plan must keep a shelter within reach and the crew must move on the first detection.',
     sources: [
@@ -17,6 +18,7 @@ export const CASES = {
       ['Lemmon et al. 2022, GRL (storm over Jezero)', 'https://agupubs.onlinelibrary.wiley.com/doi/10.1029/2022GL100126'],
       ['NASA JPL: Opportunity hunkers down during dust storm', 'https://www.jpl.nasa.gov/news/opportunity-hunkers-down-during-dust-storm/'],
       ['Eos: Opportunity rover mission complete', 'https://eos.org/articles/opportunity-rover-mission-complete'],
+      ['Sánchez-Lavega et al. 2019, GRL (2018 storm growth)', 'https://arxiv.org/abs/1906.00963'],
     ],
   },
   sep: {

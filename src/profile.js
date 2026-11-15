@@ -121,7 +121,7 @@ export class ProfileStrip {
     this.c.setAttribute('aria-valuetext', `${hm(tS)} into the EVA, ${gait === 'sampling' ? 'sampling' : GAIT_LABEL[gait].toLowerCase()}, elevation ${Math.round(cz)} metres`);
     // state bubble
     const pct = Math.round(here.grade * 100);
-    const label = here.stopTag === 'rover' ? 'Sheltering in the rover' : gait === 'sampling' ? `Sampling${here.stopTag ? ' at ' + here.stopTag : ''}` : `${GAIT_LABEL[gait]}${gait === 'normal' ? '' : ` ${pct > 0 ? '+' : ''}${pct}% grade`}`;
+    const label = here.stopTag === 'rover' ? 'Sheltering in the rover' : here.phase === 'drive' ? 'Driving home in the rover' : gait === 'sampling' ? `Sampling${here.stopTag ? ' at ' + here.stopTag : ''}` : `${GAIT_LABEL[gait]}${gait === 'normal' ? '' : ` ${pct > 0 ? '+' : ''}${pct}% grade`}`;
     g.font = '600 12px Barlow, sans-serif'; const tw = g.measureText(label).width;
     let bx = cx + 18; if (bx + tw + 14 > w - 2) bx = cx - 18 - tw - 14;
     const by = Math.max(2, cy - 58);
